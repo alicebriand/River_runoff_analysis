@@ -808,7 +808,7 @@ slope_Magnan <- coef(modele_Magnan_2014)[2]
 
 ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
   geom_line(
-    color     = "#8B2FC9",
+    color     = "violetred",
     linewidth = 0.5,
     alpha     = 0.8
   ) +
@@ -884,7 +884,7 @@ Magnan_all_debit$débit_pred_pondéré_AAM <- predict(modele_Magnan_pondéré, M
 
 ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
   geom_line(
-    color     = "#8B2FC9",
+    color     = "violetred",
     linewidth = 0.5,
     alpha     = 0.8
   ) +
@@ -912,7 +912,7 @@ ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
     y     = max(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE) * 0.80,
     label = paste0("p = ", ifelse(p_value_Magnan_pondéré < 0.001, "< 0.001",
                                   format(p_value_Magnan_pondéré, digits = 3))),
-    hjust = 0, vjust = 1,
+    hjust = 0, vjust = 2,
     size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
   ) +
   scale_x_date(
@@ -943,56 +943,158 @@ ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
     panel.border  = element_rect(color = "grey70", linewidth = 0.5)
   )
 
+# en échelle log
+
+Magnan_all_debit$log_débit <- log10(Magnan_all_debit$AAM_debit_mean)
+
+# Modèle non pondéré (supprimer weights)
+modele_log <- lm(log_débit ~ date, data = Magnan_all_debit)
+
+# Extraire les résultats
+resultats_log <- tidy(modele_log)
+p_value_log   <- resultats_log$p.value[2]
+intercept_log <- coef(modele_log)[1]
+slope_log     <- coef(modele_log)[2]
+
+# Prédictions
+Magnan_all_debit$log_debit_pred_np <- predict(modele_log, Magnan_all_debit)
+Magnan_all_debit$debit_pred_log_np <- 10^(Magnan_all_debit$log_debit_pred_np)
+
+# Calculer le modèle linéaire pondéré en échelle log
+# modele_log_pondéré <- lm(log_débit ~ date, data = Y6442010_depuis_2006, weights = poids)
+# 
+# # Extraire les résultats
+# resultats_log_pondéré <- tidy(modele_log_pondéré)
+# p_value_log_pondéré <- resultats_log_pondéré$p.value[2]
+# intercept_log_pondéré <- coef(modele_log_pondéré)[1]
+# slope_log_pondéré <- coef(modele_log_pondéré)[2]
+# 
+# # Créer les prédictions en échelle log
+# Y6442010_depuis_2006$log_debit_pred <- predict(modele_log_pondéré, Y6442010_depuis_2006)
+# 
+# # Convertir les prédictions en échelle normale
+# Y6442010_depuis_2006$debit_pred_log <- 10^(Y6442010_depuis_2006$log_debit_pred)
+
+# Créer le graphique en échelle log
+
+ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
+  geom_line(
+    color     = "violetred",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_line(
+    aes(y = debit_pred_log_np),
+    color     = "#C0392B",
+    linewidth = 0.8
+  ) +
+  annotate(
+    "text",
+    x     = min(Magnan_all_debit$date, na.rm = TRUE),
+    y     = 10^(max(log10(Magnan_all_debit$AAM_debit_mean), na.rm = TRUE) * 0.99),
+    label = paste0("log10(y) = ", round(intercept_log, 3),
+                   " + ", round(slope_log, 7), " × x"),
+    hjust = 0, vjust = 1,
+    size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  annotate(
+    "text",
+    x     = min(Magnan_all_debit$date, na.rm = TRUE),
+    y     = 10^(max(log10(Magnan_all_debit$AAM_debit_mean), na.rm = TRUE) * 0.94),
+    label = paste0("p = ", ifelse(p_value_log < 0.001, "< 0.001",
+                                  format(p_value_log, scientific = TRUE, digits = 3))),
+    hjust = 0, vjust = 3,
+    size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  scale_y_log10(
+    breaks = scales::trans_breaks("log10", function(x) 10^x),
+    labels = scales::trans_format("log10", scales::math_format(10^.x))
+  ) +
+  scale_x_date(
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
+  ) +
+  labs(
+    title    = "Débit journalier du Magnan à la station AAM(2014–2026, échelle log)",
+    subtitle = "Régression linéaire non pondérée en échelle log",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur — station AAM"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
+
+
+
 ## plotting of rivers together ---------------------------------------------
 
 # without an adjustment
 
-# Créer le graphique
 ggplot() +
-  # Débit du Var
   geom_line(
-    data = Y6442010_depuis_2000,
+    data = Y6442010_depuis_2013,
     aes(x = date, y = débit, color = "Var"),
-    linewidth = 0.8
+    linewidth = 0.5, alpha = 0.8
   ) +
-  # Débit moyen du Paillon
   geom_line(
     data = Paillon_all_debit,
-    aes(x = date, y = ABA_debit_mean, color = "Paillon"),
-    linewidth = 0.8
+    aes(x = date, y = ABA_debit_mean, color = "Paillon ABA"),
+    linewidth = 0.5, alpha = 0.8
   ) +
-  # Débit moyen du Magnan
   geom_line(
     data = Magnan_all_debit,
-    aes(x = date, y = AAM_debit_mean, color = "Magnan"),
-    linewidth = 0.8
+    aes(x = date, y = AAM_debit_mean, color = "Magnan AAM"),
+    linewidth = 0.5, alpha = 0.8
   ) +
-  # Échelle de couleurs personnalisée
   scale_color_manual(
-    values = c("Var" = "blue", "Paillon" = "gold", "Magnan" = "violetred"),
-    name = "Fleuve"
+    name   = "Cours d'eau",
+    values = c("Var" = "blue", "Paillon ABA" = "gold", "Magnan AAM" = "violetred")
   ) +
-  # Échelle des dates
   scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "1 month"
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
   ) +
-  # Échelles des axes Y (adapte selon tes données)
   scale_y_continuous(
-    name = "Débit (m³/s)",
+    expand = expansion(mult = c(0.02, 0.08))
   ) +
-  # Titres et labels
   labs(
-    title = "Comparaison des débits du Var, du Paillon (ABA) et du Magnan (AAM) de 2012 à 2026",
-    x = "Date",
-    y = "Débit (m³/s)"
+    title    = "Comparaison des débits journaliers du Var, du Paillon et du Magnan (2013–2026)",
+    subtitle = "Stations : Pont Napoléon (Var), Abattoir (Paillon), Magnan (Magnan)",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Sources : Banque HydroFrance, Métropole Nice Côte d'Azur"
   ) +
-  # Thème et ajustements visuels
-  theme_minimal() +
+  theme_bw() +
   theme(
-    legend.position = "top",
-    plot.title = element_text(hjust = 0.5, face = "bold")
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5),
+    legend.position  = "top",
+    legend.title     = element_text(size = 10, face = "bold"),
+    legend.text      = element_text(size = 9, color = "grey30"),
+    legend.key.width = unit(1.5, "cm")
   )
 
 # plotting with an adjustment
