@@ -11,10 +11,14 @@ library(scales)
 library(ggpmisc)
 library(forecast)
 library(broom)
+library(lubridate)
+library(seasonal)
+library(WaveletComp)
 
 # loading -----------------------------------------------------------------
 
 load("data/Hydro France/Y6442010_depuis_2000.Rdata")
+load("data/Hydro France/Y6442010_depuis_2006.Rdata")
 load("data/MNCA/Paillon_all_debit.Rdata")
 load("data/MNCA/Magnan_all_debit.Rdata")
 
@@ -94,6 +98,7 @@ sec_axis_adjustement_factors <- function(var_to_scale, var_ref) {
 
 # plotting ----------------------------------------------------------------
 # plotting each runoff separately
+
 ## Var runoff --------------------------------------------------------------
 
 # we have a big hole in our data from 2001 to 2006
@@ -481,6 +486,170 @@ ggplot() +
   )
 
 
+
+## Var TS decomposition ----------------------------------------------------
+
+# use a complete data set
+Y6442010_depuis_2008 <- Y6442010_depuis_2000 |> 
+  filter(date >= "2008-01-01", date < "2020-09-10")
+
+### Fourrier decomposition --------------------------------------------------
+
+#### Robert Website ----------------------------------------------------------
+
+# filter NA
+signal <- Y6442010_depuis_2008$débit[!is.na(Y6442010_depuis_2008$débit)]
+
+fft_result <- fft(signal)
+n <- length(signal)
+
+print(fft_result)
+
+# Visualization
+par(mfrow = c(2, 1))
+plot(signal, type = "l", main = "Original Signal")
+plot(Mod(fft_result), type = "l", main = "FFT Magnitudes")
+
+
+# identify the position of the highest frequency value
+magnitudes<- abs(fft_result)  ## or mod()
+
+# Find the frequency with the largest amplitude
+max_index_sine <- which.max(magnitudes)
+
+paste("magnitude value: ", magnitudes[max_index_sine] )
+
+paste("index position: ",max_index_sine)
+
+
+#### Claude ------------------------------------------------------
+
+fft_result <- fft(signal)
+n <- length(signal)
+
+# Fréquences en cycles/jour
+freq <- (0:(n/2)) / n
+
+# Périodes en jours
+periode <- 1 / freq[-1]  # on enlève la fréquence 0 (composante continue)
+
+# Amplitude
+amplitude <- Mod(fft_result)[2:(n/2 + 1)]
+
+# Graphique
+plot(periode, amplitude, type = "l",
+     xlim = c(0, 400),  # zoom sur les périodes < 400 jours
+     xlab = "Période (jours)",
+     ylab = "Amplitude",
+     main = "Spectre FFT du débit du Var (2008 - 2020)")
+
+# Marquer le cycle annuel
+abline(v = 365, col = "red", lty = 2)
+
+
+### STL decomposition --------------------------------------------------
+
+Y6442010_depuis_2008 <- Y6442010_depuis_2008  |>
+  group_by(year = lubridate::year(date))  |>
+  filter(!is.na(débit) > 0.9)  |>
+  ungroup()
+
+ts_data <- ts(Y6442010_depuis_2008$débit, frequency = 365) # 365 pour données journalières
+
+decomp <- stl(ts_data, s.window = "periodic", robust = TRUE)
+plot(decomp)
+
+tendance <- data.frame(
+  date = Y6442010_depuis_2008$date,  # Utilise les dates originales
+  valeur = as.numeric(decomp$time.series[, "trend"])
+)
+
+model_lm <- lm(valeur ~ date, data = tendance)
+summary(model_lm)
+
+### X11 decomposition --------------------------------------------------
+
+# X11 nécessite une fréquence mensuelle ou trimestrielle
+# Si tu as des données journalières, agrège d'abord par mois
+
+debit_mensuel <- Y6442010_depuis_2008 |>
+  mutate(mois = floor_date(date, "month")) |>
+  group_by(mois) |>
+  summarise(debit_mean = mean(débit, na.rm = TRUE)) |>
+  filter(!is.na(debit_mean))
+
+# Convertir en ts mensuel
+debit_ts_mensuel <- ts(debit_mensuel$debit_mean, 
+                       start     = c(2008, 1), 
+                       frequency = 12)
+
+# X11 decomposition
+x11_result <- seas(debit_ts_mensuel, x11 = "")
+plot(x11_result)
+
+# Extraire les composantes
+trend     <- trend(x11_result)
+seasonal  <- seasonal(x11_result)
+remainder <- irregular(x11_result)
+
+
+### ondelette decomposition -------------------------------------------------
+
+# données journalières
+wt <- analyze.wavelet(Y6442010_depuis_2008, "débit",
+                      loess.span = 0,
+                      dt = 1, dj = 1/12,
+                      lowerPeriod = 16,
+                      upperPeriod = 365 * 4,
+                      make.pval = TRUE)
+
+wt.image(wt, main = "Analyse en ondelettes du débit du Var journalier (2008 - 2020)",
+         # Axe X : les dates
+         show.date   = TRUE,          # affiche les vraies dates
+         date.format = "%Y",          # format des dates sur l'axe
+         
+         # Axe Y : les périodes
+         periodlab  = "Période (jour)",
+         
+         # Légende couleur
+         legend.params = list(
+           lab        = "Puissance (log2)",
+           lab.line   = 3
+         ),
+         
+         # Significativité
+         siglvl      = 0.05,          # seuil de significativité
+         col.contour = "black")        # couleur des contours significatifs)
+
+# données mensuelles
+
+wt <- analyze.wavelet(debit_mensuel, "debit_mean",
+                      loess.span = 0,
+                      dt = 1, dj = 1/12,
+                      lowerPeriod = 16,
+                      upperPeriod = 12 * 4,
+                      make.pval = TRUE)
+
+wt.image(wt, 
+         main       = "Analyse en ondelettes du débit du Var (2008–2026)",
+         # Axe X : les dates
+         show.date   = TRUE,          # affiche les vraies dates
+         date.format = "%Y",          # format des dates sur l'axe
+         # Axe Y : les périodes
+         periodlab  = "Période (mois)",
+         
+         # Légende couleur
+         legend.params = list(
+           lab        = "Puissance (log2)",
+           lab.line   = 3
+         ),
+         
+         # Significativité
+         siglvl      = 0.05,          # seuil de significativité
+         col.contour = "black")        # couleur des contours significatifs))
+
+
+
 ## Paillon runoff ----------------------------------------------------------
 
 # # Calculer le modèle de régression linéaire
@@ -791,6 +960,168 @@ ggplot() +
     panel.border  = element_rect(color = "grey70", linewidth = 0.5)
   )
 
+## Paillon TS decomposition ----------------------------------------------------
+
+### Fourrier decomposition --------------------------------------------------
+
+#### Robert Website ----------------------------------------------------------
+
+# filter NA
+signal <- Paillon_all_debit$ABA_debit_mean[!is.na(Paillon_all_debit$ABA_debit_mean)]
+
+fft_result <- fft(signal)
+n <- length(signal)
+
+print(fft_result)
+
+# Visualization
+par(mfrow = c(2, 1))
+plot(signal, type = "l", main = "Original Signal")
+plot(Mod(fft_result), type = "l", main = "FFT Magnitudes")
+
+
+# identify the position of the highest frequency value
+magnitudes<- abs(fft_result)  ## or mod()
+
+# Find the frequency with the largest amplitude
+max_index_sine <- which.max(magnitudes)
+
+paste("magnitude value: ", magnitudes[max_index_sine] )
+
+paste("index position: ",max_index_sine)
+
+
+#### Claude ------------------------------------------------------
+
+fft_result <- fft(signal)
+n <- length(signal)
+
+# Fréquences en cycles/jour
+freq <- (0:(n/2)) / n
+
+# Périodes en jours
+periode <- 1 / freq[-1]  # on enlève la fréquence 0 (composante continue)
+
+# Amplitude
+amplitude <- Mod(fft_result)[2:(n/2 + 1)]
+
+# Graphique
+plot(periode, amplitude, type = "l",
+     xlim = c(0, 400),  # zoom sur les périodes < 400 jours
+     xlab = "Période (jours)",
+     ylab = "Amplitude",
+     main = "Spectre FFT du débit du Paillon (2013 - 2026)")
+
+# Marquer le cycle annuel
+abline(v = 365, col = "red", lty = 2)
+
+
+### STL decomposition --------------------------------------------------
+
+Paillon_all_debit <- Paillon_all_debit  |>
+  group_by(year = lubridate::year(date))  |>
+  filter(!is.na(ABA_debit_mean) > 0.9)  |>
+  ungroup()
+
+ts_data <- ts(Paillon_all_debit$ABA_debit_mean, frequency = 365) # 365 pour données journalières
+
+decomp <- stl(ts_data, s.window = "periodic", robust = TRUE)
+plot(decomp)
+
+tendance <- data.frame(
+  date = Paillon_all_debit$date,  # Utilise les dates originales
+  valeur = as.numeric(decomp$time.series[, "trend"])
+)
+
+model_lm <- lm(valeur ~ date, data = tendance)
+summary(model_lm)
+
+### X11 decomposition --------------------------------------------------
+
+# X11 nécessite une fréquence mensuelle ou trimestrielle
+# Si tu as des données journalières, agrège d'abord par mois
+
+debit_mensuel <- Paillon_all_debit |>
+  mutate(mois = floor_date(date, "month")) |>
+  group_by(mois) |>
+  summarise(debit_mean = mean(ABA_debit_mean, na.rm = TRUE)) |>
+  filter(!is.na(debit_mean))
+
+# Convertir en ts mensuel
+debit_ts_mensuel <- ts(debit_mensuel$debit_mean, 
+                       start     = c(2013, 1), 
+                       frequency = 12)
+
+# X11 decomposition
+x11_result <- seas(debit_ts_mensuel, x11 = "")
+plot(x11_result)
+
+# Extraire les composantes
+trend     <- trend(x11_result)
+seasonal  <- seasonal(x11_result)
+remainder <- irregular(x11_result)
+
+
+### ondelette decomposition -------------------------------------------------
+
+# données journalières
+wt <- analyze.wavelet(Paillon_all_debit, "ABA_debit_mean",
+                      loess.span = 0,
+                      dt = 1, dj = 1/12,
+                      lowerPeriod = 16,
+                      upperPeriod = 365 * 4,
+                      make.pval = TRUE)
+
+wt.image(wt, main = "Analyse en ondelettes du débit du Paillon journalier (2013 - 2026)",
+         # Axe X : les dates
+         show.date   = TRUE,          # affiche les vraies dates
+         date.format = "%Y",          # format des dates sur l'axe
+         
+         # Axe Y : les périodes
+         periodlab  = "Période (jour)",
+         
+         # Légende couleur
+         legend.params = list(
+           lab        = "Puissance (log2)",
+           lab.line   = 3
+         ),
+         
+         # Significativité
+         siglvl      = 0.05,          # seuil de significativité
+         col.contour = "black")        # couleur des contours significatifs)
+
+# données mensuelles
+
+wt <- analyze.wavelet(debit_mensuel, "debit_mean",
+                      loess.span = 0,
+                      dt = 1, dj = 1/12,
+                      lowerPeriod = 16,
+                      upperPeriod = 12 * 4,
+                      make.pval = TRUE)
+
+wt.image(wt, 
+         main       = "Analyse en ondelettes du débit du Var (2008–2026)",
+         # Axe X : les dates
+         show.date   = TRUE,          # affiche les vraies dates
+         date.format = "%Y",          # format des dates sur l'axe
+         # Axe Y : les périodes
+         periodlab  = "Période (mois)",
+         
+         # Légende couleur
+         legend.params = list(
+           lab        = "Puissance (log2)",
+           lab.line   = 3
+         ),
+         
+         # Significativité
+         siglvl      = 0.05,          # seuil de significativité
+         col.contour = "black")        # couleur des contours significatifs))
+
+
+
+
+
+
 ## Magnan runoff -----------------------------------------------------------
 
 # Calculer le modèle de régression linéaire
@@ -1038,6 +1369,168 @@ ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
   )
 
 
+## Magnan TS decomposition ----------------------------------------------------
+
+### Fourrier decomposition --------------------------------------------------
+
+#### Robert Website ----------------------------------------------------------
+
+# filter NA
+signal <- Magnan_all_debit$AAM_debit_mean[!is.na(Magnan_all_debit$AAM_debit_mean)]
+
+fft_result <- fft(signal)
+n <- length(signal)
+
+print(fft_result)
+
+# Visualization
+par(mfrow = c(2, 1))
+plot(signal, type = "l", main = "Original Signal")
+plot(Mod(fft_result), type = "l", main = "FFT Magnitudes")
+
+
+# identify the position of the highest frequency value
+magnitudes<- abs(fft_result)  ## or mod()
+
+# Find the frequency with the largest amplitude
+max_index_sine <- which.max(magnitudes)
+
+paste("magnitude value: ", magnitudes[max_index_sine] )
+
+paste("index position: ",max_index_sine)
+
+
+#### Claude ------------------------------------------------------
+
+fft_result <- fft(signal)
+n <- length(signal)
+
+# Fréquences en cycles/jour
+freq <- (0:(n/2)) / n
+
+# Périodes en jours
+periode <- 1 / freq[-1]  # on enlève la fréquence 0 (composante continue)
+
+# Amplitude
+amplitude <- Mod(fft_result)[2:(n/2 + 1)]
+
+# Graphique
+plot(periode, amplitude, type = "l",
+     xlim = c(0, 400),  # zoom sur les périodes < 400 jours
+     xlab = "Période (jours)",
+     ylab = "Amplitude",
+     main = "Spectre FFT du débit du Magnan (2014 - 2026)")
+
+# Marquer le cycle annuel
+abline(v = 365, col = "red", lty = 2)
+
+
+### STL decomposition --------------------------------------------------
+
+Magnan_all_debit <- Magnan_all_debit  |>
+  group_by(year = lubridate::year(date))  |>
+  filter(!is.na(AAM_debit_mean) > 0.9)  |>
+  ungroup()
+
+ts_data <- ts(Magnan_all_debit$AAM_debit_mean, frequency = 365) # 365 pour données journalières
+
+decomp <- stl(ts_data, s.window = "periodic", robust = TRUE)
+plot(decomp)
+
+tendance <- data.frame(
+  date = Magnan_all_debit$date,  # Utilise les dates originales
+  valeur = as.numeric(decomp$time.series[, "trend"])
+)
+
+model_lm <- lm(valeur ~ date, data = tendance)
+summary(model_lm)
+
+### X11 decomposition --------------------------------------------------
+
+# X11 nécessite une fréquence mensuelle ou trimestrielle
+# Si tu as des données journalières, agrège d'abord par mois
+
+debit_mensuel <- Magnan_all_debit |>
+  mutate(mois = floor_date(date, "month")) |>
+  group_by(mois) |>
+  summarise(debit_mean = mean(AAM_debit_mean, na.rm = TRUE)) |>
+  filter(!is.na(debit_mean))
+
+# Convertir en ts mensuel
+debit_ts_mensuel <- ts(debit_mensuel$debit_mean, 
+                       start     = c(2014, 1), 
+                       frequency = 12)
+
+# X11 decomposition
+x11_result <- seas(debit_ts_mensuel, x11 = "")
+plot(x11_result)
+
+# Extraire les composantes
+trend     <- trend(x11_result)
+seasonal  <- seasonal(x11_result)
+remainder <- irregular(x11_result)
+
+
+### ondelette decomposition -------------------------------------------------
+
+# données journalières
+wt <- analyze.wavelet(Magnan_all_debit, "AAM_debit_mean",
+                      loess.span = 0,
+                      dt = 1, dj = 1/12,
+                      lowerPeriod = 16,
+                      upperPeriod = 365 * 4,
+                      make.pval = TRUE)
+
+wt.image(wt, main = "Analyse en ondelettes du débit du Magnan journalier (2014 - 2026)",
+         # Axe X : les dates
+         show.date   = TRUE,          # affiche les vraies dates
+         date.format = "%Y",          # format des dates sur l'axe
+         
+         # Axe Y : les périodes
+         periodlab  = "Période (jour)",
+         
+         # Légende couleur
+         legend.params = list(
+           lab        = "Puissance (log2)",
+           lab.line   = 3
+         ),
+         
+         # Significativité
+         siglvl      = 0.05,          # seuil de significativité
+         col.contour = "black")        # couleur des contours significatifs)
+
+# données mensuelles
+
+wt <- analyze.wavelet(debit_mensuel, "debit_mean",
+                      loess.span = 0,
+                      dt = 1, dj = 1/12,
+                      lowerPeriod = 16,
+                      upperPeriod = 12 * 4,
+                      make.pval = TRUE)
+
+wt.image(wt, 
+         main       = "Analyse en ondelettes du débit mensuel du Magnan (2014–2026)",
+         # Axe X : les dates
+         show.date   = TRUE,          # affiche les vraies dates
+         date.format = "%Y",          # format des dates sur l'axe
+         # Axe Y : les périodes
+         periodlab  = "Période (mois)",
+         
+         # Légende couleur
+         legend.params = list(
+           lab        = "Puissance (log2)",
+           lab.line   = 3
+         ),
+         
+         # Significativité
+         siglvl      = 0.05,          # seuil de significativité
+         col.contour = "black")        # couleur des contours significatifs))
+
+
+
+
+
+
 
 ## plotting of rivers together ---------------------------------------------
 
@@ -1165,28 +1658,6 @@ ggplot() +
 
 
 
-# Var decomposition -------------------------------------------------------
-
-Y6442010_complet <- Y6442010_depuis_2000  |> 
-  group_by(year = lubridate::year(date))  |> 
-  filter(!is.na(débit) > 0.9)  |>
-  ungroup()
-
-Y6442010_complet <- Y6442010_complet %>%
-  filter(!is.na(débit))
-
-ts_data <- ts(Y6442010_complet$débit, frequency = 365)
-
-decomp <- stl(ts_data, s.window = "periodic")
-plot(decomp)
-
-tendance <- data.frame(
-  date = Y6442010_complet$date,  # Utilise les dates originales
-  valeur = as.numeric(decomp$time.series[, "trend"])
-)
-
-model_lm <- lm(valeur ~ date, data = tendance)
-summary(model_lm)
 
 # Paillon decomposition -------------------------------------------------------
 
