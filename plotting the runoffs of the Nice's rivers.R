@@ -320,8 +320,8 @@ ggplot(data = Y6442010_depuis_2000, mapping = aes(x = date, y = débit)) +
     x = min(Y6442010_depuis_2000$date, na.rm = TRUE),  # Position en haut à gauche
     y = 10^(max(log10(Y6442010_depuis_2000$débit), na.rm = TRUE) * 1),
     label = paste0(
-      "log(y) = ", round(intercept, 3), " + ", round(slope, 7), " * x",
-      "\n", "p = ", ifelse(p_value < 0.001, "< 0.001", format(p_value, digits = 3))
+      "log(y) = ", round(intercept_log_pondéré, 3), " + ", round(slope_log_pondéré, 7), " * x",
+      "\n", "p = ", ifelse(p_value_log_pondéré < 0.001, "< 0.001", format(p_value_log_pondéré, digits = 3))
     ),
     hjust = 0,  # Alignement à gauche
     vjust = 1,  # Alignement en haut
@@ -341,14 +341,31 @@ ggplot(data = Y6442010_depuis_2000, mapping = aes(x = date, y = débit)) +
 
 ## Paillon runoff ----------------------------------------------------------
 
+# # Calculer le modèle de régression linéaire
+# modele_Paillon_2012 <- lm(ABA_debit_mean ~ date, data = Paillon_all_debit)
+# summary(modele_Paillon_2012)
+# 
+# # Extraire les résultats avec broom::tidy()
+# resultats_Paillon_2012 <- tidy(modele_Paillon_2012)
+# 
+# # Extraire la valeur p de la pente
+# p_value_Paillon_2012 <- resultats_Paillon_2012$p.value[2]  # 2ème ligne = coefficient de 'date'
+# 
+# # Extraire les coefficients pour l'équation
+# intercept_Paillon_2012 <- coef(modele_Paillon_2012)[1]
+# slope_Paillon_2012 <- coef(modele_Paillon_2012)[2]
+
+# on fait la même chose mais pour la station Trinité
+
 # Calculer le modèle de régression linéaire
 modele_Paillon_2012 <- lm(ABA_debit_mean ~ date, data = Paillon_all_debit)
+summary(modele_Paillon_2012)
 
 # Extraire les résultats avec broom::tidy()
 resultats_Paillon_2012 <- tidy(modele_Paillon_2012)
 
 # Extraire la valeur p de la pente
-p_value_Paillon <- resultats_Paillon_2012$p.value[2]  # 2ème ligne = coefficient de 'date'
+p_value_Paillon_2012 <- resultats_Paillon_2012$p.value[2]  # 2ème ligne = coefficient de 'date'
 
 # Extraire les coefficients pour l'équation
 intercept_Paillon_2012 <- coef(modele_Paillon_2012)[1]
@@ -358,35 +375,31 @@ slope_Paillon_2012 <- coef(modele_Paillon_2012)[2]
 
 ggplot(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean)) +
   geom_line(color = "gold") +
-  # geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
-  # annotate(
-  #   "text",
-  #   x = min(Paillon_all_debit$date, na.rm = TRUE),  # Position en haut à gauche
-  #   y = max(Paillon_all_debit$ABA_debit_mean, na.rm = TRUE) * 0.9,
-  #   label = paste0(
-  #     "y = ", round(intercept, 3), " + ", round(slope, 7), " * x",
-  #     "\n", "p = ", format(p_value_Paillon, scientific = TRUE, digits = 3)
-  #   ),
-  #   hjust = 0, 
-  #   vjust = 1, 
-  #   size = 3.5
-  # ) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
+  annotate(
+    "text",
+    x = min(Paillon_all_debit$date, na.rm = TRUE),  # Position en haut à gauche
+    y = max(Paillon_all_debit$ABA_debit_mean, na.rm = TRUE) * 0.9,
+    label = paste0(
+      "y = ", round(intercept_Paillon_2012, 3), " + ", round(slope_Paillon_2012, 7), " * x",
+      "\n", "p = ", ifelse(p_value_Paillon_2012 < 0.001, "< 0.001", format(p_value_Paillon_2012, digits = 3))
+    ),
+    hjust = 0,
+    vjust = 1,
+    size = 6
+  ) +
   scale_x_date(
     breaks = "1 year",
     date_labels = "%Y",
     minor_breaks = "2 year"
   ) +
   labs(
-    title = "Débit journalier du Paillon entre 2012 et 2026",
+    title = "Débit journalier du Paillon entre 2012 et 2026 à la station Abattoir",
     x = "Date",
     y = "Débit (m³/s)"
   ) +
   theme_minimal()
 
-# on regarde si la lm du graph est significativement différente de 0
-
-model_Paillon_2012 <- lm(Débit_moyen ~ date, data = Paillon_all_debit)
-summary(model_Paillon_2012)
 
 # en échelle log
 
@@ -404,7 +417,7 @@ ggplot(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean)) +
     y = 10^(max(log10(Paillon_all_debit$ABA_debit_mean), na.rm = TRUE) * 1),
     label = paste0(
       "log(y) = ", round(intercept_Paillon_2012, 3), " + ", round(slope_Paillon_2012, 7), " * x",
-      "\n", "p = ", ifelse(p_value < 0.001, "< 0.001", format(p_value, digits = 3))
+      "\n", "p = ", ifelse(p_value_Paillon_2012 < 0.001, "< 0.001", format(p_value_Paillon_2012, digits = 3))
     ),
     hjust = 0,  # Alignement à gauche
     vjust = 1,  # Alignement en haut
@@ -421,6 +434,7 @@ ggplot(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean)) +
     y = "Débit (m³/s)"
   ) +
   theme_minimal()
+
 
 ## Magnan runoff -----------------------------------------------------------
 
