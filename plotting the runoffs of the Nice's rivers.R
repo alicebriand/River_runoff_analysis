@@ -126,35 +126,71 @@ Y6442010_depuis_2006$débit_pred <- predict(modele_Var_2006, Y6442010_depuis_200
       # en échelle normale
 
 # Créer le graphique
+
 ggplot() +
-  geom_line(data = Y6442010_depuis_2000, aes(x = date, y = débit), color = "blue") +
-  geom_line(data = Y6442010_depuis_2006, aes(x = date, y = débit_pred), color = "red", linewidth = 1) +
-  # Ajouter l'intervalle de confiance (optionnel)
-  geom_smooth(data = Y6442010_depuis_2006,  aes(x = date, y = débit), method = "lm", se = TRUE, color = NA, fill = "pink", alpha = 0.2) +
-  # Annoter l'équation et la p-value
+  geom_line(
+    data  = Y6442010_depuis_2000,
+    aes(x = date, y = débit),
+    color     = "blue",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_smooth(
+    data   = Y6442010_depuis_2006,
+    aes(x = date, y = débit),
+    method = "lm", se = TRUE,
+    color  = NA, fill = "#E74C3C", alpha = 0.12
+  ) +
+  geom_line(
+    data  = Y6442010_depuis_2006,
+    aes(x = date, y = débit_pred),
+    color     = "#C0392B",
+    linewidth = 0.8
+  ) +
   annotate(
     "text",
     x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
     y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.9,
-    label = paste0(
-      "y = ", round(intercept_Var_2006, 3), "", round(slope_Var_2006, 7), " * x",
-      "\n", "p = ", ifelse(p_value_Var_2006 < 0.001, "< 0.001", format(p_value_Var_2006, scientific = TRUE, digits = 3))
-    ),
-    hjust = 0,  # Alignement à gauche
-    vjust = 1,  # Alignement en haut
-    size = 5
+    label = paste0("y = ", round(intercept_Var_2006, 3), " ", round(slope_Var_2006, 7), " × x"),
+    hjust = -1.5, vjust = 1,
+    size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  annotate(
+    "text",
+    x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+    y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.82,  # légèrement en dessous
+    label = paste0("p = ", ifelse(p_value_Var_2006 < 0.001, "< 0.001",
+                                  format(p_value_Var_2006, scientific = TRUE, digits = 3))),
+    hjust = -4, vjust = 1,
+    size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
   ) +
   scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
   ) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
   labs(
-    title = "Débit journalier du Var entre 2000 et 2026",
-    x = "Date",
-    y = "Débit (m³/s)"
+    title    = "Débit journalier du Var (2000–2026)",
+    subtitle = "Tendance linéaire estimée depuis 2006",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Banque HydroFrance - station Pont Napoléon"
   ) +
-  theme_minimal()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
 # put a weighted linear regression model on our datas
 # if peak exceed a threshold, then give them less weight
@@ -163,7 +199,6 @@ ggplot() +
 seuil <- mean(Y6442010_depuis_2006$débit, na.rm = TRUE) + 2 * sd(Y6442010_depuis_2006$débit, na.rm = TRUE)
 # Attribuer des poids : 1 pour les valeurs normales, 0.1 pour les pics
 Y6442010_depuis_2006$poids <- ifelse(Y6442010_depuis_2006$débit > seuil, 0.1, 1)
-
 
 # Calculer le modèle linéaire pondéré
 modele_Var_2006_pondéré <- lm(débit ~ date, data = Y6442010_depuis_2006, weights = poids)
@@ -178,63 +213,153 @@ slope_Var_2006_pondéré <- coef(modele_Var_2006_pondéré)[2]
 Y6442010_depuis_2006$débit_pred_pondéré <- predict(modele_Var_2006_pondéré, Y6442010_depuis_2006)
 
 ggplot() +
-  geom_line(data = Y6442010_depuis_2000, aes(x = date, y = débit), color = "blue") +
-  geom_line(data = Y6442010_depuis_2006, aes(x = date, y = débit_pred_pondéré), color = "springgreen4", linewidth = 1) +
+  geom_line(
+    data  = Y6442010_depuis_2000,
+    aes(x = date, y = débit),
+    color     = "blue",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_line(
+    data  = Y6442010_depuis_2006,
+    aes(x = date, y = débit_pred_pondéré),
+    color     = "#1A7A4A",
+    linewidth = 0.8
+  ) +
+  annotate(
+    "segment",
+    x = min(Y6442010_depuis_2006$date),
+    xend = min(Y6442010_depuis_2006$date),
+    y = 0,
+    yend = max(Y6442010_depuis_2006$débit, na.rm = TRUE),
+    color     = "grey50",
+    linewidth = 0.4,
+    linetype  = "dashed"
+  ) +
   annotate(
     "text",
-    x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
-    y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.85,
-    label = paste0(
-      "y = ", round(intercept_Var_2006_pondéré, 3), "", round(slope_Var_2006_pondéré, 7), " * x",
-      "\n", "p = ", ifelse(p_value_Var_2006_pondéré < 0.001, "< 0.001", format(p_value_Var_2006_pondéré, scientific = TRUE, digits = 3))
-    ),
-    hjust = 0,
-    vjust = 1,
-    size = 5,
+    x     = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+    y     = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.90,
+    label = paste0("y = ", round(intercept_Var_2006_pondéré, 3), " ", 
+                   round(slope_Var_2006_pondéré, 7), " × x"),
+    hjust = -1.6, vjust = 1,
+    size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  annotate(
+    "text",
+    x     = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+    y     = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.82,
+    label = paste0("p = ", ifelse(p_value_Var_2006_pondéré < 0.001, "< 0.001",
+                                  format(p_value_Var_2006_pondéré, scientific = TRUE, digits = 3))),
+    hjust = -4, vjust = 1,
+    size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
   ) +
   scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
   ) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
   labs(
-    title = "Débit journalier du Var entre 2000 et 2026",
-    x = "Date",
-    y = "Débit (m³/s)"
+    title    = "Débit journalier du Var pondéré (2000–2026)",
+    subtitle = "Tendance linéaire pondérée estimée depuis 2006",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Banque HydroFrance — station Pont Napoléon"
   ) +
-  theme_minimal()
-
-
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
 
 # compare the linear model and the weighted linear model
+
 ggplot() +
-  geom_line(data = Y6442010_depuis_2000, aes(x = date, y = débit), color = "blue") +
-  geom_line(data = Y6442010_depuis_2006, aes(x = date, y = débit_pred), color = "red", linewidth = 1) +
-  geom_line(data = Y6442010_depuis_2006, aes(x = date, y = débit_pred_pondéré), color = "springgreen4", linewidth = 1) +
-  annotate(
-    "text",
-    x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
-    y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.9,
-    label = paste0(
-      "Non pondéré: y = ", round(intercept_Var_2006, 3), " + ", round(slope_Var_2006, 7), " * x",
-      "\n", "Pondéré: y = ", round(intercept_Var_2006_pondéré, 3), " + ", round(slope_Var_2006_pondéré, 7), " * x"
-    ),
-    hjust = 0,
-    vjust = 1,
-    size = 4
+  geom_line(
+    data  = Y6442010_depuis_2000,
+    aes(x = date, y = débit),
+    color     = "blue",
+    linewidth = 0.5,
+    alpha     = 0.8
   ) +
-  scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
+  geom_line(
+    data  = Y6442010_depuis_2006,
+    aes(x = date, y = débit_pred),
+    color     = "#C0392B",
+    linewidth = 0.8
   ) +
+  geom_line(
+    data  = Y6442010_depuis_2006,
+    aes(x = date, y = débit_pred_pondéré),
+    color     = "#1A7A4A",
+    linewidth = 0.8
+  ) +
+  annotate("text",
+           x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+           y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.90,
+           label = paste0("Non pondéré : y = ", round(intercept_Var_2006, 3),
+                          " + ", round(slope_Var_2006, 7), " × x"),
+           hjust = 0.53, vjust = 1,
+           size = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  annotate("text",
+           x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+           y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.84,
+           label = paste0("p = ", ifelse(p_value_Var_2006 < 0.001, "< 0.001",
+                                         format(p_value_Var_2006, scientific = TRUE, digits = 3))),
+           hjust = 1.9, vjust = 1,
+           size = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  annotate("text",
+           x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+           y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.75,
+           label = paste0("Pondéré : y = ", round(intercept_Var_2006_pondéré, 3),
+                          " + ", round(slope_Var_2006_pondéré, 7), " × x"),
+           hjust = 0.58, vjust = 1,
+           size = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  annotate("text",
+           x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+           y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.69,
+           label = paste0("p = ", ifelse(p_value_Var_2006_pondéré < 0.001, "< 0.001",
+                                         format(p_value_Var_2006_pondéré, scientific = TRUE, digits = 3))),
+           hjust = 1.9, vjust = 1,
+           size = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
   labs(
-    title = "Comparaison des régressions linéaires (pondérée vs non pondérée)",
-    x = "Date",
-    y = "Débit (m³/s)"
+    title    = "Comparaison des régressions linéaires du débit du Var (2000–2026)",
+    subtitle = "Régression non pondérée (rouge) vs pondérée (vert) — estimées depuis 2006",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Banque HydroFrance — station Pont Napoléon"
   ) +
-  theme_minimal()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
+
+
 
 # the difference is small
 
@@ -242,102 +367,119 @@ ggplot() +
 
 
      # en échelle log
+# 
+# Y6442010_depuis_2000$log_débit <- log10(Y6442010_depuis_2000$débit)
+# # Calculer la colonne log_débit
+# Y6442010_depuis_2006$log_débit <- log10(Y6442010_depuis_2006$débit)
+# # Définir un seuil (par exemple, 2 écarts-types au-dessus de la moyenne)
+# seuil_log <- mean(Y6442010_depuis_2006$log_débit, na.rm = TRUE) + 
+#   2 * sd(Y6442010_depuis_2006$log_débit, na.rm = TRUE)
+# Y6442010_depuis_2006$poids <- ifelse(Y6442010_depuis_2006$log_débit > seuil_log, 0.1, 1)
 
-Y6442010_depuis_2000$log_débit <- log10(Y6442010_depuis_2000$débit)
-# Calculer la colonne log_débit
-Y6442010_depuis_2006$log_débit <- log10(Y6442010_depuis_2006$débit)
-# Définir un seuil (par exemple, 2 écarts-types au-dessus de la moyenne)
-seuil_log <- mean(Y6442010_depuis_2006$log_débit, na.rm = TRUE) + 
-  2 * sd(Y6442010_depuis_2006$log_débit, na.rm = TRUE)
-Y6442010_depuis_2006$poids <- ifelse(Y6442010_depuis_2006$log_débit > seuil_log, 0.1, 1)
-
-
-# Calculer le modèle linéaire pondéré en échelle log
-modele_log_pondéré <- lm(log_débit ~ date, data = Y6442010_depuis_2006, weights = poids)
+# Modèle non pondéré (supprimer weights)
+modele_log <- lm(log_débit ~ date, data = Y6442010_depuis_2006)
 
 # Extraire les résultats
-resultats_log_pondéré <- tidy(modele_log_pondéré)
-p_value_log_pondéré <- resultats_log_pondéré$p.value[2]
-intercept_log_pondéré <- coef(modele_log_pondéré)[1]
-slope_log_pondéré <- coef(modele_log_pondéré)[2]
+resultats_log <- tidy(modele_log)
+p_value_log   <- resultats_log$p.value[2]
+intercept_log <- coef(modele_log)[1]
+slope_log     <- coef(modele_log)[2]
 
-# Créer les prédictions en échelle log
-Y6442010_depuis_2006$log_debit_pred <- predict(modele_log_pondéré, Y6442010_depuis_2006)
+# Prédictions
+Y6442010_depuis_2006$log_debit_pred_np <- predict(modele_log, Y6442010_depuis_2006)
+Y6442010_depuis_2006$debit_pred_log_np <- 10^(Y6442010_depuis_2006$log_debit_pred_np)
 
-# Convertir les prédictions en échelle normale
-Y6442010_depuis_2006$debit_pred_log <- 10^(Y6442010_depuis_2006$log_debit_pred)
+# Calculer le modèle linéaire pondéré en échelle log
+# modele_log_pondéré <- lm(log_débit ~ date, data = Y6442010_depuis_2006, weights = poids)
+# 
+# # Extraire les résultats
+# resultats_log_pondéré <- tidy(modele_log_pondéré)
+# p_value_log_pondéré <- resultats_log_pondéré$p.value[2]
+# intercept_log_pondéré <- coef(modele_log_pondéré)[1]
+# slope_log_pondéré <- coef(modele_log_pondéré)[2]
+# 
+# # Créer les prédictions en échelle log
+# Y6442010_depuis_2006$log_debit_pred <- predict(modele_log_pondéré, Y6442010_depuis_2006)
+# 
+# # Convertir les prédictions en échelle normale
+# Y6442010_depuis_2006$debit_pred_log <- 10^(Y6442010_depuis_2006$log_debit_pred)
 
 # Créer le graphique en échelle log
+
+
 ggplot() +
-  # Tracer les données en échelle log (utilise log_débit)
-  geom_line(data = Y6442010_depuis_2000, aes(x = date, y = débit), color = "blue") +
-  # Ajouter la ligne de régression pondérée (en échelle normale, mais le graphique est en log)
-  geom_line(data = Y6442010_depuis_2006, aes(x = date, y = debit_pred_log), color = "springgreen4", linewidth = 1) +
-  # Échelle log pour l'axe y
+  geom_line(
+    data  = Y6442010_depuis_2000,
+    aes(x = date, y = débit),
+    color     = "blue",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_line(
+    data  = Y6442010_depuis_2006,
+    aes(x = date, y = debit_pred_log_np),  # _np au lieu de debit_pred_log
+    color     = "#C0392B",  # rouge pour distinguer du pondéré
+    linewidth = 0.8
+  ) +
+  annotate(
+    "segment",
+    x = min(Y6442010_depuis_2006$date),
+    xend = min(Y6442010_depuis_2006$date),
+    y = min(Y6442010_depuis_2000$débit, na.rm = TRUE),
+    yend = max(Y6442010_depuis_2000$débit, na.rm = TRUE),
+    color     = "grey50",
+    linewidth = 0.4,
+    linetype  = "dashed"
+  ) +
+  annotate("text",
+           x     = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+           y     = 10^(max(log10(Y6442010_depuis_2006$débit), na.rm = TRUE) * 0.97),
+           label = paste0("log10(y) = ", round(intercept_log, 3),
+                          " ", round(slope_log, 7), " × x"),
+           color = "#C0392B",
+           hjust = 0.58, vjust = 1,
+           size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  annotate("text",
+           x     = min(Y6442010_depuis_2006$date, na.rm = TRUE),
+           y     = 10^(max(log10(Y6442010_depuis_2006$débit), na.rm = TRUE) * 0.93),
+           label = paste0("p = ", ifelse(p_value_log < 0.001, "< 0.001",
+                                         format(p_value_log, scientific = TRUE, digits = 3))),
+           color = "#C0392B",
+           hjust = 1.5, vjust = 1,
+           size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
   scale_y_log10(
-    name = "Débit (m³/s, log10)",
     breaks = scales::trans_breaks("log10", function(x) 10^x),
     labels = scales::trans_format("log10", scales::math_format(10^.x))
   ) +
-  # Annoter l'équation et la p-value de la régression pondérée
-  annotate(
-    "text",
-    x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
-    y = 10^(max(log10(Y6442010_depuis_2006$débit), na.rm = TRUE) * 0.85),
-    label = paste0(
-      "log10(y) = ", round(intercept_log_pondéré, 3), "", round(slope_log_pondéré, 7), " * x",
-      "\n", "p = ", ifelse(p_value_log_pondéré < 0.001, "< 0.001", format(p_value_log_pondéré, scientific = TRUE, digits = 3))
-    ),
-    hjust = 1,
-    vjust = -1,
-    size = 5,
-  ) +
   scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
   ) +
   labs(
-    title = "Débit journalier du Var entre 2000 et 2026 (échelle log10)",
-    x = "Date",
-    y = "Débit (m³/s, log10)"
+    title    = "Débit journalier du Var (2000–2026, échelle log)",
+    subtitle = "Régression linéaire non pondérée en échelle log estimée depuis 2006",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Banque HydroFrance — station Pont Napoléon"
   ) +
-  theme_minimal()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
-
-
-
-ggplot(data = Y6442010_depuis_2000, mapping = aes(x = date, y = débit)) +
-  geom_line(color = "blue") +
-  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
-  scale_y_log10(
-    name = "Débit (m³/s, log)",
-    breaks = scales::trans_breaks("log10", function(x) 10^x),
-    labels = scales::trans_format("log10", scales::math_format(10^.x))
-  ) +
-  annotate(
-    "text",
-    x = min(Y6442010_depuis_2000$date, na.rm = TRUE),  # Position en haut à gauche
-    y = 10^(max(log10(Y6442010_depuis_2000$débit), na.rm = TRUE) * 1),
-    label = paste0(
-      "log(y) = ", round(intercept_log_pondéré, 3), " + ", round(slope_log_pondéré, 7), " * x",
-      "\n", "p = ", ifelse(p_value_log_pondéré < 0.001, "< 0.001", format(p_value_log_pondéré, digits = 3))
-    ),
-    hjust = 0,  # Alignement à gauche
-    vjust = 1,  # Alignement en haut
-    size = 3.5
-  ) +
-  scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
-  ) +
-  labs(
-    title = "Débit journalier du Var entre 2000 et 2026 (échelle log)",
-    x = "Date",
-    y = "Débit (m³/s, log)"
-  ) +
-  theme_minimal()
 
 ## Paillon runoff ----------------------------------------------------------
 
@@ -358,7 +500,7 @@ ggplot(data = Y6442010_depuis_2000, mapping = aes(x = date, y = débit)) +
 # on fait la même chose mais pour la station Trinité
 
 # Calculer le modèle de régression linéaire
-modele_Paillon_2012 <- lm(ABA_debit_mean ~ date, data = Paillon_all_debit)
+modele_Paillon_2012 <- lm(TRI_debit_mean ~ date, data = Paillon_all_debit)
 summary(modele_Paillon_2012)
 
 # Extraire les résultats avec broom::tidy()
@@ -371,70 +513,283 @@ p_value_Paillon_2012 <- resultats_Paillon_2012$p.value[2]  # 2ème ligne = coeff
 intercept_Paillon_2012 <- coef(modele_Paillon_2012)[1]
 slope_Paillon_2012 <- coef(modele_Paillon_2012)[2]
 
+
 # graphique en échelle normale
 
-ggplot(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean)) +
-  geom_line(color = "gold") +
-  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
-  annotate(
-    "text",
-    x = min(Paillon_all_debit$date, na.rm = TRUE),  # Position en haut à gauche
-    y = max(Paillon_all_debit$ABA_debit_mean, na.rm = TRUE) * 0.9,
-    label = paste0(
-      "y = ", round(intercept_Paillon_2012, 3), " + ", round(slope_Paillon_2012, 7), " * x",
-      "\n", "p = ", ifelse(p_value_Paillon_2012 < 0.001, "< 0.001", format(p_value_Paillon_2012, digits = 3))
-    ),
-    hjust = 0,
-    vjust = 1,
-    size = 6
+ggplot(data = Paillon_all_debit, mapping = aes(x = date, y = TRI_debit_mean)) +
+  geom_line(
+    color     = "gold",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_smooth(
+    method = "lm", se = TRUE,
+    color  = "#C0392B", fill = "#E74C3C", alpha = 0.12,
+    linewidth = 0.8
+  ) +
+  annotate("text",
+           x     = min(Paillon_all_debit$date, na.rm = TRUE),
+           y     = max(Paillon_all_debit$TRI_debit_mean, na.rm = TRUE) * 0.90,
+           label = paste0("y = ", round(intercept_Paillon_2012, 3),
+                          " + ", round(slope_Paillon_2012, 7), " × x"),
+           hjust = 0, vjust = 1,
+           size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  annotate("text",
+           x     = min(Paillon_all_debit$date, na.rm = TRUE),
+           y     = max(Paillon_all_debit$TRI_debit_mean, na.rm = TRUE) * 0.82,
+           label = paste0("p = ", ifelse(p_value_Paillon_2012 < 0.001, "< 0.001",
+                                         format(p_value_Paillon_2012, digits = 3))),
+           hjust = 0, vjust = 1,
+           size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
   ) +
   scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
   ) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
   labs(
-    title = "Débit journalier du Paillon entre 2012 et 2026 à la station Abattoir",
-    x = "Date",
-    y = "Débit (m³/s)"
+    title    = "Débit journalier du Paillon à la station Trinité (2013–2026)",
+    subtitle = "Régression linéaire non pondérée",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur — station Trinité"
   ) +
-  theme_minimal()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
+
+# put a weighted linear regression model on our datas
+# if peak exceed a threshold, then give them less weight
+
+# Définir un seuil (par exemple, 2 écarts-types au-dessus de la moyenne)
+seuil_paillon <- mean(Paillon_all_debit$TRI_debit_mean, na.rm = TRUE) + 2 * sd(Paillon_all_debit$TRI_debit_mean, na.rm = TRUE)
+# Attribuer des poids : 1 pour les valeurs normales, 0.1 pour les pics
+Paillon_all_debit$poids_TRI <- ifelse(Paillon_all_debit$TRI_debit_mean > seuil_paillon, 0.1, 1)
+
+# Calculer le modèle linéaire pondéré
+modele_Paillon_pondéré <- lm(TRI_debit_mean ~ date, data = Paillon_all_debit, weights = poids_TRI)
+
+# Extraire les résultats
+resultats_Paillon_pondéré <- tidy(modele_Paillon_pondéré)
+p_value_Paillon_pondéré <- resultats_Paillon_pondéré$p.value[2]
+intercept_Paillon_pondéré <- coef(modele_Paillon_pondéré)[1]
+slope_Paillon_pondéré <- coef(modele_Paillon_pondéré)[2]
+
+# Ajouter les prédictions au data.frame
+Paillon_all_debit$débit_pred_pondéré_TRI <- predict(modele_Paillon_pondéré, Paillon_all_debit)
+
+ggplot(data = Paillon_all_debit, aes(x = date, y = TRI_debit_mean)) +
+  geom_line(
+    color     = "gold",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  # geom_smooth(
+  #   method = "lm", se = TRUE,
+  #   color  = NA, fill = "#1A7A4A", alpha = 0.12
+  # ) +
+  geom_line(
+    aes(y = débit_pred_pondéré_TRI),
+    color     = "#1A7A4A",
+    linewidth = 0.8
+  ) +
+  annotate(
+    "text",
+    x     = min(Paillon_all_debit$date, na.rm = TRUE),
+    y     = max(Paillon_all_debit$TRI_debit_mean, na.rm = TRUE) * 0.90,
+    label = paste0("y = ", round(intercept_Paillon_pondéré, 3),
+                   " + ", round(slope_Paillon_pondéré, 7), " × x"),
+    hjust = 0, vjust = 1,
+    size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  annotate(
+    "text",
+    x     = min(Paillon_all_debit$date, na.rm = TRUE),
+    y     = max(Paillon_all_debit$TRI_debit_mean, na.rm = TRUE) * 0.80,
+    label = paste0("p = ", ifelse(p_value_Paillon_pondéré < 0.001, "< 0.001",
+                                  format(p_value_Paillon_pondéré, digits = 3))),
+    hjust = 0, vjust = 1,
+    size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  scale_x_date(
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
+  labs(
+    title    = "Débit journalier du Paillon à la station Trinité (2013–2026)",
+    subtitle = "Régression linéaire pondérée — pics atténués (seuil = μ + 2σ)",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur — station Trinité"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
+
+
 
 
 # en échelle log
 
 ggplot(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean)) +
-  geom_line(color = "gold") +
-  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
+  geom_line(
+    color     = "gold",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_smooth(
+    method = "lm", se = TRUE,
+    color  = "#C0392B", fill = "#E74C3C", alpha = 0.12,
+    linewidth = 0.8
+  ) +
+  annotate("text",
+           x     = min(Paillon_all_debit$date, na.rm = TRUE),
+           y     = 10^(max(log10(Paillon_all_debit$ABA_debit_mean), na.rm = TRUE) * 0.99),
+           label = paste0("log10(y) = ", round(intercept_Paillon_2012, 3),
+                          " ", round(slope_Paillon_2012, 7), " × x"),
+           hjust = 0, vjust = 1,
+           size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  annotate("text",
+           x     = min(Paillon_all_debit$date, na.rm = TRUE),
+           y     = 10^(max(log10(Paillon_all_debit$ABA_debit_mean), na.rm = TRUE) * 0.94),
+           label = paste0("p = ", ifelse(p_value_Paillon_2012 < 0.001, "< 0.001",
+                                         format(p_value_Paillon_2012, digits = 3))),
+           hjust = 0, vjust = 2,
+           size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
   scale_y_log10(
-    name = "Débit (m³/s, log)",
     breaks = scales::trans_breaks("log10", function(x) 10^x),
     labels = scales::trans_format("log10", scales::math_format(10^.x))
   ) +
-  annotate(
-    "text",
-    x = min(Paillon_all_debit$date, na.rm = TRUE),  # Position en haut à gauche
-    y = 10^(max(log10(Paillon_all_debit$ABA_debit_mean), na.rm = TRUE) * 1),
-    label = paste0(
-      "log(y) = ", round(intercept_Paillon_2012, 3), " + ", round(slope_Paillon_2012, 7), " * x",
-      "\n", "p = ", ifelse(p_value_Paillon_2012 < 0.001, "< 0.001", format(p_value_Paillon_2012, digits = 3))
-    ),
-    hjust = 0,  # Alignement à gauche
-    vjust = 1,  # Alignement en haut
-    size = 3.5
-  ) +
   scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
   ) +
   labs(
-    title = "Débit journalier du Paillon entre 2012 et 2026",
-    x = "Date",
-    y = "Débit (m³/s)"
+    title    = "Débit journalier du Paillon (2013–2026, échelle log)",
+    subtitle = "Régression linéaire non pondérée",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur — station Abattoir"
   ) +
-  theme_minimal()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
+
+# on compare les stations abattoir et trinité
+
+ggplot() +
+  geom_line(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean, color = "Abattoir")) +
+  geom_line(data = Paillon_all_debit, mapping = aes(x = date, y = TRI_debit_mean, color = "Trinité")) +
+  scale_color_manual(
+    name   = "Station",
+    values = c("Abattoir" = "#E6A817", "Trinité" = "#4A90D9")
+  ) +
+  scale_x_date(
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
+  ) +
+  labs(
+    title    = "Comparaison des débits aux stations Abattoir et Trinité (2013–2026)",
+    # subtitle = "Régression linéaire non pondérée",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur — station Abattoir et Trinité"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
+
+# Comparaison Abattoir Var
+
+Y6442010_depuis_2013 <- Y6442010_depuis_2000 |> 
+  filter(date >= "2013-01-01")
+
+ggplot() +
+  geom_line(data = Y6442010_depuis_2013, mapping = aes(x = date, y = débit, color = "Var")) +
+  geom_line(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean, color = "Paillon - ABA")) +
+  scale_color_manual(
+    name   = "Station",
+    values = c("Var" = "blue", "Paillon - ABA" = "#E6A817")
+  ) +
+  scale_x_date(
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
+  ) +
+  labs(
+    title    = "Comparaison des débits du Var et du Paillon (station Abattoir) (2013–2026)",
+    # subtitle = "Régression linéaire non pondérée",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur et HydroFrance — station Abattoir"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
 ## Magnan runoff -----------------------------------------------------------
 
@@ -451,33 +806,142 @@ p_value_Magnan <- resultats_Magnan_2014$p.value[2]  # 2ème ligne = coefficient 
 intercept_Magnan <- coef(modele_Magnan_2014)[1]
 slope_Magnan <- coef(modele_Magnan_2014)[2]
 
-ggplot(data = Magnan_all_debit, mapping = aes(x = date, y = AAM_debit_mean)) +
-  geom_line(color = "violetred") +
-  # geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
-  # annotate(
-  #   "text",
-  #   x = min(Magnan_all_debit$date, na.rm = TRUE),  # Position en haut à gauche
-  #   y = max(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE) * 0.9,
-  #   label = paste0(
-  #     "y = ", round(intercept_Magnan, 3), " + ", round(slope_Magnan, 7), " * x",
-  #     "\n", "p = ", format(p_value_Magnan, scientific = TRUE, digits = 3)
-  #   ),
-  #   hjust = 0, 
-  #   vjust = 1, 
-  #   size = 3.5
-  # ) +
+ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
+  geom_line(
+    color     = "#8B2FC9",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_smooth(
+    method = "lm", se = TRUE,
+    color  = "#C0392B", fill = "#E74C3C", alpha = 0.12,
+    linewidth = 0.8
+  ) +
+  annotate("text",
+           x     = min(Magnan_all_debit$date, na.rm = TRUE),
+           y     = max(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE) * 0.90,
+           label = paste0("y = ", round(intercept_Magnan, 3),
+                          " + ", round(slope_Magnan, 7), " × x"),
+           hjust = 0, vjust = 1,
+           size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
+  annotate("text",
+           x     = min(Magnan_all_debit$date, na.rm = TRUE),
+           y     = max(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE) * 0.80,
+           label = paste0("p = ", ifelse(p_value_Magnan < 0.001, "< 0.001",
+                                         format(p_value_Magnan, scientific = TRUE, digits = 3))),
+           hjust = 0, vjust = 1,
+           size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
+  ) +
   scale_x_date(
-    breaks = "1 year",
-    date_labels = "%Y",
-    minor_breaks = "2 year"
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
   ) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
   labs(
-    title = "Débit journalier du Magnan entre 2014 et 2026",
-    x = "Date",
-    y = "Débit (m³/s)"
+    title    = "Débit journalier du Magnan (2014–2026)",
+    subtitle = "Régression linéaire avec intervalle de confiance à 95 %",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur — station Magnan"
   ) +
-  theme_minimal()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
+
+# put a weighted linear regression model on our datas
+# if peak exceed a threshold, then give them less weight
+
+# Définir un seuil (par exemple, 2 écarts-types au-dessus de la moyenne)
+seuil_magnan <- mean(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE) + 2 * sd(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE)
+# Attribuer des poids : 1 pour les valeurs normales, 0.1 pour les pics
+Magnan_all_debit$poids_AAM <- ifelse(Magnan_all_debit$AAM_debit_mean > seuil_magnan, 0.1, 1)
+
+# Calculer le modèle linéaire pondéré
+modele_Magnan_pondéré <- lm(AAM_debit_mean ~ date, data = Magnan_all_debit, weights = poids_AAM)
+
+# Extraire les résultats
+resultats_Magnan_pondéré <- tidy(modele_Magnan_pondéré)
+p_value_Magnan_pondéré <- resultats_Magnan_pondéré$p.value[2]
+intercept_Magnan_pondéré <- coef(modele_Magnan_pondéré)[1]
+slope_Magnan_pondéré <- coef(modele_Magnan_pondéré)[2]
+
+# Ajouter les prédictions au data.frame
+Magnan_all_debit$débit_pred_pondéré_AAM <- predict(modele_Magnan_pondéré, Magnan_all_debit)
+
+ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
+  geom_line(
+    color     = "#8B2FC9",
+    linewidth = 0.5,
+    alpha     = 0.8
+  ) +
+  geom_smooth(
+    method = "lm", se = TRUE,
+    color  = NA, fill = "#1A7A4A", alpha = 0.12
+  ) +
+  geom_line(
+    aes(y = débit_pred_pondéré_AAM),
+    color     = "#1A7A4A",
+    linewidth = 0.8
+  ) +
+  annotate(
+    "text",
+    x     = min(Magnan_all_debit$date, na.rm = TRUE),
+    y     = max(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE) * 0.90,
+    label = paste0("y = ", round(intercept_Magnan_pondéré, 3),
+                   " + ", round(slope_Magnan_pondéré, 7), " × x"),
+    hjust = 0, vjust = 1,
+    size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  annotate(
+    "text",
+    x     = min(Magnan_all_debit$date, na.rm = TRUE),
+    y     = max(Magnan_all_debit$AAM_debit_mean, na.rm = TRUE) * 0.80,
+    label = paste0("p = ", ifelse(p_value_Magnan_pondéré < 0.001, "< 0.001",
+                                  format(p_value_Magnan_pondéré, digits = 3))),
+    hjust = 0, vjust = 1,
+    size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
+  ) +
+  scale_x_date(
+    date_breaks       = "2 years",
+    date_labels       = "%Y",
+    date_minor_breaks = "1 year",
+    expand            = expansion(mult = 0.01)
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
+  labs(
+    title    = "Débit journalier du Magnan à la station AAM (2014–2026)",
+    subtitle = "Régression linéaire pondérée — pics atténués (seuil = μ + 2σ)",
+    x        = NULL,
+    y        = "Débit (m³ s⁻¹)",
+    caption  = "Source : Métropole Nice Côte d'Azur — station AAM"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
 ## plotting of rivers together ---------------------------------------------
 
