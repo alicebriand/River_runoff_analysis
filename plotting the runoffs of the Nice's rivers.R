@@ -14,6 +14,7 @@ library(broom)
 library(lubridate)
 library(seasonal)
 library(WaveletComp)
+library(patchwork)
 
 # loading -----------------------------------------------------------------
 
@@ -164,7 +165,7 @@ ggplot() +
     "text",
     x = min(Y6442010_depuis_2006$date, na.rm = TRUE),
     y = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.82,  # légèrement en dessous
-    label = paste0("p = ", ifelse(p_value_Var_2006 < 0.001, "< 0.001",
+    label = paste0("p ", ifelse(p_value_Var_2006 < 0.001, "< 0.001",
                                   format(p_value_Var_2006, scientific = TRUE, digits = 3))),
     hjust = -4, vjust = 1,
     size  = 8, color = "#C0392B", fontface = "italic", family = "serif"
@@ -254,9 +255,9 @@ ggplot() +
     "text",
     x     = min(Y6442010_depuis_2006$date, na.rm = TRUE),
     y     = max(Y6442010_depuis_2006$débit, na.rm = TRUE) * 0.82,
-    label = paste0("p = ", ifelse(p_value_Var_2006_pondéré < 0.001, "< 0.001",
+    label = paste0("p ", ifelse(p_value_Var_2006_pondéré < 0.001, "< 0.001",
                                   format(p_value_Var_2006_pondéré, scientific = TRUE, digits = 3))),
-    hjust = -4, vjust = 1,
+    hjust = -5, vjust = 1,
     size  = 8, color = "#1A7A4A", fontface = "italic", family = "serif"
   ) +
   scale_x_date(
@@ -267,10 +268,10 @@ ggplot() +
   ) +
   scale_y_continuous(expand = expansion(mult = c(0.02, 0.08))) +
   labs(
-    title    = "Débit journalier du Var pondéré (2000–2026)",
+    title    = "Débit journalier du Var (2000–2026)",
     subtitle = "Tendance linéaire pondérée estimée depuis 2006",
     x        = NULL,
-    y        = "Débit (m³ s⁻¹)",
+    y        = "Débit (m³. s⁻¹)",
     caption  = "Source : Banque HydroFrance — station Pont Napoléon"
   ) +
   theme_bw() +
@@ -490,7 +491,7 @@ ggplot() +
 ## Var TS decomposition ----------------------------------------------------
 
 # use a complete data set
-Y6442010_depuis_2008 <- Y6442010_depuis_2000 |> 
+Y6442010_2008_2020 <- Y6442010_depuis_2000 |> 
   filter(date >= "2008-01-01", date < "2020-09-10")
 
 ### Fourrier decomposition --------------------------------------------------
@@ -498,7 +499,7 @@ Y6442010_depuis_2008 <- Y6442010_depuis_2000 |>
 #### Robert Website ----------------------------------------------------------
 
 # filter NA
-signal <- Y6442010_depuis_2008$débit[!is.na(Y6442010_depuis_2008$débit)]
+signal <- Y6442010_2008_2020$débit[!is.na(Y6442010_2008_2020$débit)]
 
 fft_result <- fft(signal)
 n <- length(signal)
@@ -549,23 +550,111 @@ abline(v = 365, col = "red", lty = 2)
 
 ### STL decomposition --------------------------------------------------
 
-Y6442010_depuis_2008 <- Y6442010_depuis_2008  |>
-  group_by(year = lubridate::year(date))  |>
-  filter(!is.na(débit) > 0.9)  |>
-  ungroup()
+# 1. Nettoyage des données
+Y6442010_2008_2020_clean <- Y6442010_2008_2020 |>
+  filter(!is.na(débit)) |>          # supprimer les NA
+  arrange(date)                      # s'assurer que les dates sont triées
 
-ts_data <- ts(Y6442010_depuis_2008$débit, frequency = 365) # 365 pour données journalières
+# 2. Vérifier la continuité de la série (pas de jours manquants)
+date_complete <- seq(min(Y6442010_2008_2020_clean$date), 
+                     max(Y6442010_2008_2020_clean$date), 
+                     by = "day")
+cat("Jours manquants :", length(setdiff(date_complete, Y6442010_2008_2020_clean$date)), "\n")
 
-decomp <- stl(ts_data, s.window = "periodic", robust = TRUE)
-plot(decomp)
+# 3. Série temporelle et décomposition STL
+ts_data <- ts(Y6442010_2008_2020_clean$débit, frequency = 365)
 
-tendance <- data.frame(
-  date = Y6442010_depuis_2008$date,  # Utilise les dates originales
-  valeur = as.numeric(decomp$time.series[, "trend"])
+decomp <- stl(
+  ts_data,
+  s.window = "periodic",  # saisonnalité stable dans le temps
+  robust   = TRUE          # robuste aux valeurs extrêmes (crues)
 )
 
-model_lm <- lm(valeur ~ date, data = tendance)
+# 4. Extraire les composantes
+# Recréer tendance avec toutes les composantes STL
+tendance <- data.frame(
+  date      = Y6442010_2008_2020_clean$date,
+  valeur    = Y6442010_2008_2020_clean$débit,         
+  trend     = as.numeric(decomp$time.series[, "trend"]),
+  seasonal  = as.numeric(decomp$time.series[, "seasonal"]),
+  remainder = as.numeric(decomp$time.series[, "remainder"])
+)
+
+# 5. Modèle linéaire sur la tendance
+model_lm <- lm(trend ~ date, data = tendance)
 summary(model_lm)
+
+slope     <- coef(model_lm)[2]
+intercept <- coef(model_lm)[1]
+p_value   <- summary(model_lm)$coefficients[2, 4]
+
+cat("Pente :", round(slope * 365, 3), "m³/s par an\n")
+# Pente : -1.067 m³/s par an
+cat("p-value :", p_value, "\n")
+# p-value : 2.423877e-155
+
+
+# Couleurs
+col_debit   <- "steelblue"
+col_trend   <- "darkred"
+col_season  <- "darkorange"
+col_residu  <- "grey50"
+
+# Panel 1 — Débit brut + tendance
+p1 <- ggplot(tendance, aes(x = date)) +
+  geom_line(aes(y = valeur), color = col_debit, alpha = 0.5, linewidth = 0.4) +
+  geom_line(aes(y = trend), color = col_trend, linewidth = 1.2) +
+  geom_smooth(aes(y = trend), method = "lm", 
+              color = "black", linetype = "dashed", 
+              se = TRUE, linewidth = 0.8) +
+  annotate(
+    "text",
+    x     = max(tendance$date),
+    y     = max(tendance$valeur, na.rm = TRUE),
+    hjust = 1, vjust = 1,
+    label = paste0(
+      "Pente = ", round(slope * 365, 2), "m³/s/an",
+      "\np ", ifelse(p_value < 0.001, "< 0.001", round(p_value, 3))
+    ),
+    size = 8, fontface = "italic", color = "grey20"
+  ) +
+  labs(
+    title = "Décomposition STL du débit journalier du Var (2008–2020)",
+    y     = expression("Débit (m"^3*".s"^-1*")"),
+    x     = NULL
+  ) +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", size = 13))
+
+
+# Panel 2 — Composante saisonnière
+p2 <- ggplot(tendance, aes(x = date, y = seasonal)) +
+  geom_line(color = col_season, linewidth = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  labs(
+    y = expression("Saisonnalité (m"^3*".s"^-1*")"),
+    x = NULL
+  ) +
+  theme_bw()
+
+# Panel 3 — Résidus
+p3 <- ggplot(tendance, aes(x = date, y = remainder)) +
+  geom_line(color = col_residu, linewidth = 0.4, alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  labs(
+    y = expression("Résidus (m"^3*".s"^-1*")"),
+    x = "Date"
+  ) +
+  theme_bw()
+
+# Assembler avec patchwork
+p1 / p2 / p3 +
+  plot_layout(heights = c(3, 1.5, 1.5)) &
+  theme(
+    axis.text      = element_text(size = 10, color = "grey30"),
+    axis.title     = element_text(size = 11, face = "bold"),
+    panel.grid.minor = element_blank()
+  )
 
 ### X11 decomposition --------------------------------------------------
 
