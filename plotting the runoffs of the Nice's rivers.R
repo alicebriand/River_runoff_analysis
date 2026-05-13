@@ -22,6 +22,7 @@ load("data/Hydro France/Y6442010_depuis_2000.Rdata")
 load("data/Hydro France/Y6442010_depuis_2006.Rdata")
 load("data/MNCA/Paillon_all_debit.Rdata")
 load("data/MNCA/Magnan_all_debit.Rdata")
+load("data/Hydro France/Y6442010_depuis_2013.Rdata")
 
 # Complete missing dates in the date range
 Y6442010_depuis_2000 <- Y6442010_depuis_2000 %>%
@@ -278,8 +279,8 @@ ggplot() +
   theme(
     plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
     plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
-    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
-    axis.title.y  = element_text(size = 11, margin = margin(r = 10)),
+    plot.caption  = element_text(size = 12,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 14, margin = margin(r = 10)),
     axis.text     = element_text(size = 10, color = "grey30"),
     axis.text.x   = element_text(angle = 45, hjust = 1),
     axis.ticks    = element_line(color = "grey70"),
@@ -491,15 +492,15 @@ ggplot() +
 ## Var TS decomposition ----------------------------------------------------
 
 # use a complete data set
-Y6442010_2008_2020 <- Y6442010_depuis_2000 |> 
-  filter(date >= "2008-01-01", date < "2020-09-10")
+Y6442010_2006_2026 <- Y6442010_depuis_2000 |> 
+  filter(date >= "2005-12-31", date < "2026-03-05")
 
 ### Fourrier decomposition --------------------------------------------------
 
 #### Robert Website ----------------------------------------------------------
 
 # filter NA
-signal <- Y6442010_2008_2020$débit[!is.na(Y6442010_2008_2020$débit)]
+signal <- Y6442010_2006_2026$débit[!is.na(Y6442010_2006_2026$débit)]
 
 fft_result <- fft(signal)
 n <- length(signal)
@@ -550,19 +551,35 @@ abline(v = 365, col = "red", lty = 2)
 
 ### STL decomposition --------------------------------------------------
 
-# 1. Nettoyage des données
-Y6442010_2008_2020_clean <- Y6442010_2008_2020 |>
-  filter(!is.na(débit)) |>          # supprimer les NA
-  arrange(date)                      # s'assurer que les dates sont triées
+# 1. Nettoyage initial
+Y6442010_2006_2026_clean <- Y6442010_2006_2026 |>
+  filter(!is.na(débit)) |>
+  arrange(date)
 
-# 2. Vérifier la continuité de la série (pas de jours manquants)
-date_complete <- seq(min(Y6442010_2008_2020_clean$date), 
-                     max(Y6442010_2008_2020_clean$date), 
-                     by = "day")
-cat("Jours manquants :", length(setdiff(date_complete, Y6442010_2008_2020_clean$date)), "\n")
+# 2. Créer une séquence de dates complète et joindre
+Y6442010_2006_2026_complete <- data.frame(
+  date = seq(min(Y6442010_2006_2026_clean$date),
+             max(Y6442010_2006_2026_clean$date),
+             by = "day")
+) |>
+  # Left join pour créer des NA là où les dates manquent
+  left_join(Y6442010_2006_2026_clean, by = "date")
+
+# 3. Vérifier que les NA sont bien créés
+cat("Lignes totales    :", nrow(Y6442010_2006_2026_complete), "\n")
+cat("NA après jointure :", sum(is.na(Y6442010_2006_2026_complete$débit)), "\n")
+
+# 4. interpolation nécessaire pour combler les 945 jours
+Y6442010_2006_2026_complete <- Y6442010_2006_2026_complete |>
+  mutate(
+    # débit = zoo::na.spline(débit, na.rm = FALSE),
+    # débit = pmax(débit, 0)
+    # Alternative plus conservative :
+    débit = zoo::na.approx(débit, na.rm = FALSE)  # linéaire
+  )
 
 # 3. Série temporelle et décomposition STL
-ts_data <- ts(Y6442010_2008_2020_clean$débit, frequency = 365)
+ts_data <- ts(Y6442010_2006_2026_complete$débit, frequency = 365)
 
 decomp <- stl(
   ts_data,
@@ -573,8 +590,8 @@ decomp <- stl(
 # 4. Extraire les composantes
 # Recréer tendance avec toutes les composantes STL
 tendance <- data.frame(
-  date      = Y6442010_2008_2020_clean$date,
-  valeur    = Y6442010_2008_2020_clean$débit,         
+  date      = Y6442010_2006_2026_complete$date,
+  valeur    = Y6442010_2006_2026_complete$débit,         
   trend     = as.numeric(decomp$time.series[, "trend"]),
   seasonal  = as.numeric(decomp$time.series[, "seasonal"]),
   remainder = as.numeric(decomp$time.series[, "remainder"])
@@ -589,9 +606,9 @@ intercept <- coef(model_lm)[1]
 p_value   <- summary(model_lm)$coefficients[2, 4]
 
 cat("Pente :", round(slope * 365, 3), "m³/s par an\n")
-# Pente : -1.067 m³/s par an
+# Pente : -0.59 m³/s par an
 cat("p-value :", p_value, "\n")
-# p-value : 2.423877e-155
+# p-value : 1.723787e-165
 
 
 # Couleurs
@@ -619,12 +636,24 @@ p1 <- ggplot(tendance, aes(x = date)) +
     size = 8, fontface = "italic", color = "grey20"
   ) +
   labs(
-    title = "Décomposition STL du débit journalier du Var (2008–2020)",
+    title = "Décomposition STL du débit journalier du Var (2006–2026)",
     y     = expression("Débit (m"^3*".s"^-1*")"),
     x     = NULL
   ) +
   theme_bw() +
-  theme(plot.title = element_text(face = "bold", size = 13))
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 14, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
+
 
 
 # Panel 2 — Composante saisonnière
@@ -635,7 +664,19 @@ p2 <- ggplot(tendance, aes(x = date, y = seasonal)) +
     y = expression("Saisonnalité (m"^3*".s"^-1*")"),
     x = NULL
   ) +
-  theme_bw()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 14, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
 # Panel 3 — Résidus
 p3 <- ggplot(tendance, aes(x = date, y = remainder)) +
@@ -645,7 +686,19 @@ p3 <- ggplot(tendance, aes(x = date, y = remainder)) +
     y = expression("Résidus (m"^3*".s"^-1*")"),
     x = "Date"
   ) +
-  theme_bw()
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 14, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
 
 # Assembler avec patchwork
 p1 / p2 / p3 +
@@ -1015,6 +1068,7 @@ ggplot() +
 Y6442010_depuis_2013 <- Y6442010_depuis_2000 |> 
   filter(date >= "2013-01-01")
 
+
 ggplot() +
   geom_line(data = Y6442010_depuis_2013, mapping = aes(x = date, y = débit, color = "Var")) +
   geom_line(data = Paillon_all_debit, mapping = aes(x = date, y = ABA_debit_mean, color = "Paillon - ABA")) +
@@ -1364,7 +1418,6 @@ ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
   )
 
 # en échelle log
-
 Magnan_all_debit$log_débit <- log10(Magnan_all_debit$AAM_debit_mean)
 
 # Modèle non pondéré (supprimer weights)
