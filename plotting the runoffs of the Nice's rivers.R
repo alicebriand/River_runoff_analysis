@@ -709,6 +709,90 @@ p1 / p2 / p3 +
     panel.grid.minor = element_blank()
   )
 
+# maintenant on aimerais savoir si les crues ont augmenté ou pas dans les dernières années
+# ces crues sont stockées dans les résidus comme événements aberrants
+
+# on définit tout d'abord un seuil à ne pas dépasser
+# ce seuil est défini avec le centile 95
+
+# threshold <- quantile(tendance$remainder, 0.95, na.rm = TRUE) # de 57.3
+# étant donné que le débit moyen du Var est de 42 m3/s, je trouve ce seuil très bas
+threshold <- 200
+
+# on définit les crues comme étant les événements supérieures à ce seuil
+crues <- tendance$remainder > threshold
+
+dates <- tendance$date
+
+dates_crues <- dates[crues]
+
+# on compte les crues par années
+df <- data.frame(
+  date = dates,
+  crue = crues
+)
+
+freq_annuelle <- df %>%
+  mutate(year = year(date)) %>%
+  group_by(year) %>%
+  summarise(nb_crues = sum(crue, na.rm = TRUE))
+
+plot(freq_annuelle$year,
+     freq_annuelle$nb_crues,
+     type = "b")
+
+model_lm <- lm(nb_crues ~ year, data = freq_annuelle)
+summary(model_lm)
+
+slope     <- coef(model_lm)[2]
+intercept <- coef(model_lm)[1]
+p_value   <- summary(model_lm)$coefficients[2, 4]
+
+# Ajouter les prédictions au data.frame
+freq_annuelle$débit_pred <- predict(model_lm, freq_annuelle)
+
+ggplot() +
+  geom_line(data = freq_annuelle, aes(x = year, y = nb_crues)) +
+  # geom_smooth(aes(y = nb_crues), method = "lm", 
+  #             color = "black", linetype = "dashed", 
+  #             se = TRUE, linewidth = 0.8) +
+  geom_line(
+    data  = freq_annuelle,
+    aes(x = year, y = débit_pred),
+    color     = "red",
+    linewidth = 0.8
+  ) +
+  annotate(
+    "text",
+    x     = max(freq_annuelle$year),
+    y     = max(freq_annuelle$nb_crues, na.rm = TRUE),
+    hjust = 1, vjust = 1,
+    label = paste0(
+      "Pente = ", round(slope * 365, 2), " crues",
+      "\np = ", ifelse(p_value < 0.001, "< 0.001", round(p_value, 3))
+    ),
+    size = 8, fontface = "italic", color = "grey20", family = "serif"
+  ) +
+  labs(
+    title = "Évolution du nombre de crues par années (2005 - 2026)",
+    y     = "nombre de crues",
+    x     = NULL
+  ) +
+  theme_bw() +
+  theme(
+    plot.title    = element_text(size = 13, face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(size = 10, color = "grey40", margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8,  color = "grey50", hjust = 0),
+    axis.title.y  = element_text(size = 14, margin = margin(r = 10)),
+    axis.text     = element_text(size = 10, color = "grey30"),
+    axis.text.x   = element_text(angle = 45, hjust = 1),
+    axis.ticks    = element_line(color = "grey70"),
+    panel.grid.major = element_line(color = "grey92", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey96", linewidth = 0.2),
+    panel.border  = element_rect(color = "grey70", linewidth = 0.5)
+  )
+
+
 ### X11 decomposition --------------------------------------------------
 
 # X11 nécessite une fréquence mensuelle ou trimestrielle
