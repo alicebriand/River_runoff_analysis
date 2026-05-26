@@ -819,6 +819,172 @@ seasonal  <- seasonal(x11_result)
 remainder <- irregular(x11_result)
 
 
+
+
+
+
+
+# on choisit une période remplie donc entre 2008 et 2019
+
+Y6442010_2008_2019 <- Y6442010_depuis_2000 |> 
+  filter(date >= as.Date("2008-01-01"), date <= as.Date("2019-12-31"))
+
+sum(is.na(Y6442010_2008_2019))
+
+# Localiser et caractériser les trous
+Y6442010_2008_2019 |>
+  mutate(est_na = is.na(débit)) |>
+  filter(est_na) |>
+  mutate(
+    groupe = cumsum(c(1, diff(as.numeric(date)) > 1))
+  ) |>
+  group_by(groupe) |>
+  summarise(
+    debut     = min(date),
+    fin       = max(date),
+    n_jours   = n()
+  ) |>
+  arrange(debut)
+
+# interpolation
+library(zoo)
+
+Y6442010_2008_2019 <- Y6442010_2008_2019 |>
+  arrange(date) |>
+  mutate(
+    debit_interp = na.approx(débit, x = date, na.rm = FALSE)
+  )
+
+# Vérifier qu'il ne reste plus de NA
+sum(is.na(Y6442010_2008_2019$debit_interp))
+
+# Visualiser pour vérifier que l'interpolation est cohérente
+Y6442010_2008_2019 |>
+  mutate(est_interpole = is.na(débit) & !is.na(debit_interp)) |>
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = debit_interp), color = "steelblue", linewidth = 0.5) +
+  geom_point(
+    data = ~ filter(.x, est_interpole),
+    aes(y = debit_interp),
+    color = "red", size = 1.5
+  ) +
+  labs(
+    title    = "Débit du Var interpolé — 2008–2019",
+    subtitle = "Points rouges = valeurs interpolées",
+    x        = NULL,
+    y        = "Débit (m³/s)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+library(seasonal)
+library(tidyverse)
+
+# Agréger en mensuel
+debit_mensuel <- Y6442010_2008_2019 |>
+  mutate(mois = floor_date(date, "month")) |>
+  group_by(mois) |>
+  summarise(debit = mean(debit_interp, na.rm = TRUE))
+
+# Vérifier qu'il n'y a plus de NA
+sum(is.na(debit_mensuel$debit))
+
+# Créer la série temporelle sur la colonne débit uniquement
+debit_ts <- ts(
+  data      = debit_mensuel$debit,  # ← juste la colonne
+  start     = c(2008, 1),
+  frequency = 12
+)
+
+# Appliquer X11
+x11_result <- seas(debit_ts, x11 = "")
+
+# 3. Inspecter les résultats
+summary(x11_result)
+
+# 4. Extraire les composantes
+composantes <- data.frame(
+  date        = debit_mensuel$mois,
+  observed    = as.numeric(original(x11_result)),    # signal brut
+  tendance    = as.numeric(trend(x11_result)),        # tendance lissée
+  saisonnalite = as.numeric(seasonal(x11_result)),   # composante saisonnière
+  residus     = as.numeric(irregular(x11_result))    # résidus
+)
+
+# 5. Visualiser
+composantes_long <- composantes |>
+  pivot_longer(-date, names_to = "composante", values_to = "valeur") |>
+  mutate(composante = factor(composante,
+                             levels = c("observed", "tendance", "saisonnalite", "residus")))
+library(seasonal)
+library(patchwork)
+
+# Extraire les composantes
+composantes <- data.frame(
+  date         = debit_mensuel$mois,
+  observed     = as.numeric(original(x11_result)),
+  tendance     = as.numeric(trend(x11_result)),
+  saisonnalite = as.numeric(seasonal(x11_result)),
+  residus      = as.numeric(irregular(x11_result))
+)
+
+# Graphique 1 — Signal brut + tendance
+p1 <- ggplot(composantes, aes(x = date)) +
+  geom_line(aes(y = observed, color = "Signal brut"), linewidth = 0.5, alpha = 0.7) +
+  geom_line(aes(y = tendance, color = "Tendance"), linewidth = 1.1) +
+  scale_color_manual(values = c("Signal brut" = "steelblue", "Tendance" = "firebrick")) +
+  labs(title = "a) Signal observé et tendance", x = NULL, y = "Débit (m³/s)", color = NULL) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    legend.position  = "top",
+    legend.text      = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 2 — Saisonnalité
+p2 <- ggplot(composantes, aes(x = date, y = saisonnalite)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(saisonnalite, 0), ymax = 0), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 0, ymax = pmax(saisonnalite, 0)), fill = "chartreuse4", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  labs(title = "b) Composante saisonnière", x = NULL, y = "Débit (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 3 — Résidus
+p3 <- ggplot(composantes, aes(x = date, y = residus)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(residus, 1), ymax = 1), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 1, ymax = pmax(residus, 1)), fill = "tomato", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(title = "c) Résidus (irrégulier)", x = NULL, y = "Facteur") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  )
+
+# Assembler
+(p1 / p2 / p3) +
+  plot_annotation(
+    title    = "Décomposition X11 du débit du Var — 2008–2019",
+    subtitle = "Station Y6442010 — Agrégation mensuelle",
+    theme    = theme(
+      plot.title    = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey50")
+    )
+  )
+
 ### ondelette decomposition -------------------------------------------------
 
 # données journalières
@@ -1419,6 +1585,8 @@ ggplot(data = Magnan_all_debit, aes(x = date, y = AAM_debit_mean)) +
     panel.border  = element_rect(color = "grey70", linewidth = 0.5)
   )
 
+crues_magnan <- Magnan_all_debit |> 
+  filter(AAM_debit_mean > 20)
 
 # put a weighted linear regression model on our datas
 # if peak exceed a threshold, then give them less weight
