@@ -15,6 +15,8 @@ library(lubridate)
 library(seasonal)
 library(WaveletComp)
 library(patchwork)
+library(zoo)
+library(tidyverse)
 
 # loading -----------------------------------------------------------------
 
@@ -23,6 +25,7 @@ load("data/Hydro France/Y6442010_depuis_2006.Rdata")
 load("data/MNCA/Paillon_all_debit.Rdata")
 load("data/MNCA/Magnan_all_debit.Rdata")
 load("data/Hydro France/Y6442010_depuis_2013.Rdata")
+load("data/All_debit.Rdata")
 
 # Complete missing dates in the date range
 Y6442010_depuis_2000 <- Y6442010_depuis_2000 %>%
@@ -794,35 +797,6 @@ ggplot() +
 
 
 ### X11 decomposition --------------------------------------------------
-
-# X11 nécessite une fréquence mensuelle ou trimestrielle
-# Si tu as des données journalières, agrège d'abord par mois
-
-debit_mensuel <- Y6442010_depuis_2008 |>
-  mutate(mois = floor_date(date, "month")) |>
-  group_by(mois) |>
-  summarise(debit_mean = mean(débit, na.rm = TRUE)) |>
-  filter(!is.na(debit_mean))
-
-# Convertir en ts mensuel
-debit_ts_mensuel <- ts(debit_mensuel$debit_mean, 
-                       start     = c(2008, 1), 
-                       frequency = 12)
-
-# X11 decomposition
-x11_result <- seas(debit_ts_mensuel, x11 = "")
-plot(x11_result)
-
-# Extraire les composantes
-trend     <- trend(x11_result)
-seasonal  <- seasonal(x11_result)
-remainder <- irregular(x11_result)
-
-
-
-
-
-
 
 # on choisit une période remplie donc entre 2008 et 2019
 
@@ -1926,7 +1900,7 @@ wt.image(wt,
 
 
 
-## plotting of rivers together ---------------------------------------------
+# plotting of rivers together ---------------------------------------------
 
 # without an adjustment
 
@@ -2050,7 +2024,154 @@ ggplot() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
+### X11 decomposition --------------------------------------------------
 
+# on choisit une période remplie donc entre 2008 et 2019
+
+All_debit <- All_debit |> 
+  filter(date >= as.Date("2014-01-01"), date <= as.Date("2019-12-31"))
+
+sum(is.na(All_debit))
+# 520
+
+# Localiser et caractériser les trous
+All_debit |>
+  mutate(est_na = is.na(debit_cumule)) |>
+  filter(est_na) |>
+  mutate(
+    groupe = cumsum(c(1, diff(as.numeric(date)) > 1))
+  ) |>
+  group_by(groupe) |>
+  summarise(
+    debut     = min(date),
+    fin       = max(date),
+    n_jours   = n()
+  ) |>
+  arrange(debut)
+
+All_debit <- All_debit |>
+  arrange(date) |>
+  mutate(
+    debit_interp = na.approx(debit_cumule, x = date, na.rm = FALSE)
+  )
+
+# Vérifier qu'il ne reste plus de NA
+sum(is.na(All_debit$debit_interp))
+# 0
+
+# Visualiser pour vérifier que l'interpolation est cohérente
+All_debit |>
+  mutate(est_interpole = is.na(debit_cumule) & !is.na(debit_interp)) |>
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = debit_interp), color = "steelblue", linewidth = 0.5) +
+  geom_point(
+    data = ~ filter(.x, est_interpole),
+    aes(y = debit_interp),
+    color = "red", size = 1.5
+  ) +
+  labs(
+    title    = "Débit cumulé interpolé — 2014–2019",
+    subtitle = "Points rouges = valeurs interpolées",
+    x        = NULL,
+    y        = "Débit (m³/s)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+# Agréger en mensuel
+debit_mensuel <- All_debit |>
+  mutate(mois = floor_date(date, "month")) |>
+  group_by(mois) |>
+  summarise(debit = mean(debit_interp, na.rm = TRUE))
+
+# Vérifier qu'il n'y a plus de NA
+sum(is.na(debit_mensuel$debit))
+# 0
+
+# Créer la série temporelle sur la colonne débit uniquement
+debit_ts <- ts(
+  data      = debit_mensuel$debit,  # ← juste la colonne
+  start     = c(2014, 1),
+  frequency = 12
+)
+
+# Appliquer X11
+x11_result <- seas(debit_ts, x11 = "")
+
+# 3. Inspecter les résultats
+summary(x11_result)
+
+# 4. Extraire les composantes
+composantes <- data.frame(
+  date        = debit_mensuel$mois,
+  observed    = as.numeric(original(x11_result)),    # signal brut
+  tendance    = as.numeric(trend(x11_result)),        # tendance lissée
+  saisonnalite = as.numeric(seasonal(x11_result)),   # composante saisonnière
+  residus     = as.numeric(irregular(x11_result))    # résidus
+)
+
+# 5. Visualiser
+composantes_long <- composantes |>
+  pivot_longer(-date, names_to = "composante", values_to = "valeur") |>
+  mutate(composante = factor(composante,
+                             levels = c("observed", "tendance", "saisonnalite", "residus")))
+
+# Graphique 1 — Signal brut + tendance
+p1 <- ggplot(composantes, aes(x = date)) +
+  geom_line(aes(y = observed, color = "Signal brut"), linewidth = 0.5, alpha = 0.7) +
+  geom_line(aes(y = tendance, color = "Tendance"), linewidth = 1.1) +
+  scale_color_manual(values = c("Signal brut" = "steelblue", "Tendance" = "firebrick")) +
+  labs(title = "a) Signal observé et tendance", x = NULL, y = "Débit (m³/s)", color = NULL) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    legend.position  = "top",
+    legend.text      = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 2 — Saisonnalité
+p2 <- ggplot(composantes, aes(x = date, y = saisonnalite)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(saisonnalite, 0), ymax = 0), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 0, ymax = pmax(saisonnalite, 0)), fill = "chartreuse4", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  labs(title = "b) Composante saisonnière", x = NULL, y = "Débit (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 3 — Résidus
+p3 <- ggplot(composantes, aes(x = date, y = residus)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(residus, 1), ymax = 1), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 1, ymax = pmax(residus, 1)), fill = "tomato", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(title = "c) Résidus (irrégulier)", x = NULL, y = "Facteur") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  )
+
+# Assembler
+(p1 / p2 / p3) +
+  plot_annotation(
+    title    = "Décomposition X11 du débit cumulé — 2014–2019",
+    subtitle = "Agrégation mensuelle",
+    theme    = theme(
+      plot.title    = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey50")
+    )
+  )
 
 
 # Paillon decomposition -------------------------------------------------------
@@ -2079,5 +2200,507 @@ summary(model_lm)
 
 # Flood analysis ----------------------------------------------------------
 
+## Var ---------------------------------------------------------------------
+
 Var_crues <- Y6442010_complet %>%
-  filter(débit > 200)
+  filter(date >= as.Date("2008-01-01"), date <= as.Date("2019-12-31")) |> 
+  filter(débit > 121)
+
+# Extraire le maximum annuel de crue
+Var_crues_annuel <- Var_crues |>
+  group_by(year) |>
+  summarise(
+    debit_max    = max(débit, na.rm = TRUE),
+    debit_moyen  = mean(débit, na.rm = TRUE),
+    n_jours_crue = n()
+  )
+
+# Modèles linéaires
+model_max    <- lm(debit_max    ~ year, data = Var_crues_annuel)
+model_moyen  <- lm(debit_moyen  ~ year, data = Var_crues_annuel)
+model_njours <- lm(n_jours_crue ~ year, data = Var_crues_annuel)
+
+# Extraire les stats
+get_stats <- function(model) {
+  list(
+    p     = summary(model)$coefficients[2, 4],
+    slope = coef(model)[2]
+  )
+}
+
+stats_max    <- get_stats(model_max)
+stats_moyen  <- get_stats(model_moyen)
+stats_njours <- get_stats(model_njours)
+
+# ── Graphique 1 : débit max annuel ──
+p1 <- ggplot(Var_crues_annuel, aes(x = year, y = debit_max)) +
+  geom_point(color = "firebrick", size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "firebrick", fill = "firebrick",
+              alpha = 0.15, linewidth = 1) +
+  annotate("text",
+           x = min(Var_crues_annuel$year),
+           y = max(Var_crues_annuel$debit_max) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_max$slope, 1), " m³/s/an",
+                          "\np ", ifelse(stats_max$p < 0.05, "< 0.05",
+                                         ifelse(stats_max$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_max$p, 3)))))) +
+  labs(title = "a) Débit maximum annuel en crue",
+       x = NULL, y = "Débit max (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Graphique 2 : débit moyen en crue ──
+p2 <- ggplot(Var_crues_annuel, aes(x = year, y = debit_moyen)) +
+  geom_point(color = "steelblue", size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "steelblue", fill = "steelblue",
+              alpha = 0.15, linewidth = 1) +
+  annotate("text",
+           x = min(Var_crues_annuel$year),
+           y = max(Var_crues_annuel$debit_moyen) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_moyen$slope, 1), " m³/s/an",
+                          "\np ", ifelse(stats_moyen$p < 0.05, "< 0.05",
+                                         ifelse(stats_moyen$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_moyen$p, 3)))))) +
+  labs(title = "b) Débit moyen annuel en crue",
+       x = NULL, y = "Débit moyen (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Graphique 3 : nombre de jours en crue ──
+p3 <- ggplot(Var_crues_annuel, aes(x = year, y = n_jours_crue)) +
+  geom_col(fill = "darkorange", alpha = 0.7, color = "black", linewidth = 0.2) +
+  geom_smooth(method = "lm", color = "darkorange4", fill = "darkorange",
+              alpha = 0.2, linewidth = 1) +
+  annotate("text",
+           x = min(Var_crues_annuel$year),
+           y = max(Var_crues_annuel$n_jours_crue) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_njours$slope, 2), " jours/an",
+                          "\np ", ifelse(stats_njours$p < 0.05, "< 0.05",
+                                         ifelse(stats_njours$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_njours$p, 3)))))) +
+  labs(title = "c) Nombre de jours en crue par an (seuil > 100 m³/s)",
+       x = NULL, y = "Nb jours") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Assemblage ──
+(p1 / p2 / p3) +
+  plot_annotation(
+    title    = "Évolution des crues du Var",
+    subtitle = "Seuil de crue : débit > 100 m³/s · Station Y6442010",
+    caption  = "Source : Banque Hydro France",
+    theme    = theme(
+      plot.title    = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey50"),
+      plot.caption  = element_text(size = 9,  color = "grey50", hjust = 0)
+    )
+  )
+
+# Définir un seuil de crue (ex : percentile 95)
+seuil_crue <- quantile(Y6442010_2008_2019$debit_interp, 0.95, na.rm = TRUE)
+print(seuil_crue)
+
+crues_saison <- Y6442010_2008_2019 |>
+  filter(debit_interp >= seuil_crue) |>
+  mutate(month = month(date, label = TRUE, abbr = TRUE)) |>
+  count(month)
+
+ggplot(crues_saison, aes(x = month, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black",
+           linewidth = 0.2) +
+  labs(title = "Saisonnalité des crues du Var (2008-2019)",
+       x = NULL, y = "Nombre de jours en crue") +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+## Paillon ---------------------------------------------------------------------
+
+load("data/MNCA/Paillon_all_debit.Rdata")
+
+sum(is.na(Paillon_all_debit))
+
+Paillon_all_debit <- Paillon_all_debit |> 
+  mutate(year = year(date),
+         month = month(date)) |> 
+  filter(date >= as.Date("2013-01-01"), date <= as.Date("2019-12-31"))
+
+# Localiser et caractériser les trous
+Paillon_all_debit |>
+  mutate(est_na = is.na(ABA_debit_mean)) |>
+  filter(est_na) |>
+  mutate(
+    groupe = cumsum(c(1, diff(as.numeric(date)) > 1))
+  ) |>
+  group_by(groupe) |>
+  summarise(
+    debut     = min(date),
+    fin       = max(date),
+    n_jours   = n()
+  ) |>
+  arrange(debut)
+
+Paillon_all_debit <- Paillon_all_debit |>
+  arrange(date) |>
+  mutate(
+    debit_interp = na.approx(ABA_debit_mean, x = date, na.rm = FALSE)
+  )
+
+# Vérifier qu'il ne reste plus de NA
+sum(is.na(Paillon_all_debit$debit_interp))
+
+# Définir un seuil de crue (ex : percentile 95)
+seuil_crue_paillon <- quantile(Paillon_all_debit$debit_interp, 0.95, na.rm = TRUE)
+
+Paillon_crues <- Paillon_all_debit %>%
+  filter(debit_interp > 85)
+# 229
+
+# Extraire le maximum annuel de crue
+Paillon_crues_annuel <- Paillon_crues |>
+  group_by(year) |>
+  summarise(
+    debit_max    = max(debit_interp, na.rm = TRUE),
+    debit_moyen  = mean(debit_interp, na.rm = TRUE),
+    n_jours_crue = n()
+  )
+
+# Modèles linéaires
+model_max    <- lm(debit_max    ~ year, data = Paillon_crues_annuel)
+model_moyen  <- lm(debit_moyen  ~ year, data = Paillon_crues_annuel)
+model_njours <- lm(n_jours_crue ~ year, data = Paillon_crues_annuel)
+
+# Extraire les stats
+get_stats <- function(model) {
+  list(
+    p     = summary(model)$coefficients[2, 4],
+    slope = coef(model)[2]
+  )
+}
+
+stats_max    <- get_stats(model_max)
+stats_moyen  <- get_stats(model_moyen)
+stats_njours <- get_stats(model_njours)
+
+# ── Graphique 1 : débit max annuel ──
+p1 <- ggplot(Paillon_crues_annuel, aes(x = year, y = debit_max)) +
+  geom_point(color = "firebrick", size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "firebrick", fill = "firebrick",
+              alpha = 0.15, linewidth = 1) +
+  annotate("text",
+           x = min(Paillon_crues_annuel$year),
+           y = max(Paillon_crues_annuel$debit_max) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_max$slope, 1), " m³/s/an",
+                          "\np ", ifelse(stats_max$p < 0.05, "< 0.05",
+                                         ifelse(stats_max$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_max$p, 3)))))) +
+  labs(title = "a) Débit maximum annuel en crue",
+       x = NULL, y = "Débit max (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Graphique 2 : débit moyen en crue ──
+p2 <- ggplot(Paillon_crues_annuel, aes(x = year, y = debit_moyen)) +
+  geom_point(color = "steelblue", size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "steelblue", fill = "steelblue",
+              alpha = 0.15, linewidth = 1) +
+  annotate("text",
+           x = min(Paillon_crues_annuel$year),
+           y = max(Paillon_crues_annuel$debit_moyen) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_moyen$slope, 1), " m³/s/an",
+                          "\np ", ifelse(stats_moyen$p < 0.05, "< 0.05",
+                                         ifelse(stats_moyen$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_moyen$p, 3)))))) +
+  labs(title = "b) Débit moyen annuel en crue",
+       x = NULL, y = "Débit moyen (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Graphique 3 : nombre de jours en crue ──
+p3 <- ggplot(Paillon_crues_annuel, aes(x = year, y = n_jours_crue)) +
+  geom_col(fill = "darkorange", alpha = 0.7, color = "black", linewidth = 0.2) +
+  geom_smooth(method = "lm", color = "darkorange4", fill = "darkorange",
+              alpha = 0.2, linewidth = 1) +
+  annotate("text",
+           x = min(Paillon_crues_annuel$year),
+           y = max(Paillon_crues_annuel$n_jours_crue) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_njours$slope, 2), " jours/an",
+                          "\np ", ifelse(stats_njours$p < 0.05, "< 0.05",
+                                         ifelse(stats_njours$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_njours$p, 3)))))) +
+  labs(title = "c) Nombre de jours en crue par an (seuil > 85 m³/s)",
+       x = NULL, y = "Nb jours") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Assemblage ──
+(p1 / p2 / p3) +
+  plot_annotation(
+    title    = "Évolution des crues du Paillon (2013 - 2019)",
+    subtitle = "Seuil de crue : débit > 85 m³/s · Station ABA",
+    caption  = "Source : Banque Hydro France",
+    theme    = theme(
+      plot.title    = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey50"),
+      plot.caption  = element_text(size = 9,  color = "grey50", hjust = 0)
+    )
+  )
+
+crues_saison <- Paillon_all_debit |>
+  filter(debit_interp >= seuil_crue_paillon) |>
+  mutate(month = month(date, label = TRUE, abbr = TRUE)) |>
+  count(month)
+
+ggplot(crues_saison, aes(x = month, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black",
+           linewidth = 0.2) +
+  labs(title = "Saisonnalité des crues du Paillon (2013-2019)",
+       x = NULL, y = "Nombre de jours en crue") +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+## Magnan ---------------------------------------------------------------------
+
+load("data/MNCA/Magnan_all_debit.Rdata")
+
+Magnan_all_debit <- Magnan_all_debit |> 
+  mutate(year = year(date),
+         month = month(date)) |> 
+  filter(date >= as.Date("2014-01-01"), date <= as.Date("2019-12-31"))
+
+sum(is.na(Magnan_all_debit))
+
+# Localiser et caractériser les trous
+Magnan_all_debit |>
+  mutate(est_na = is.na(AAM_debit_mean)) |>
+  filter(est_na) |>
+  mutate(
+    groupe = cumsum(c(1, diff(as.numeric(date)) > 1))
+  ) |>
+  group_by(groupe) |>
+  summarise(
+    debut     = min(date),
+    fin       = max(date),
+    n_jours   = n()
+  ) |>
+  arrange(debut)
+
+Magnan_all_debit <- Magnan_all_debit |>
+  arrange(date) |>
+  mutate(
+    debit_interp = na.approx(AAM_debit_mean, x = date, na.rm = FALSE)
+  )
+
+# Vérifier qu'il ne reste plus de NA
+sum(is.na(Magnan_all_debit$debit_interp))
+
+# Définir un seuil de crue (ex : percentile 95)
+seuil_crue_magnan <- quantile(Magnan_all_debit$debit_interp, 0.95, na.rm = TRUE)
+
+# attention ici le seuil est calculé à 0,4 mais je trouve ça hyper bas donc j'ai mis 10
+Magnan_crues <- Magnan_all_debit %>%
+  filter(debit_interp > 10)
+# 10
+
+# Extraire le maximum annuel de crue
+Magnan_crues_annuel <- Magnan_crues |>
+  group_by(year) |>
+  summarise(
+    debit_max    = max(debit_interp, na.rm = TRUE),
+    debit_moyen  = mean(debit_interp, na.rm = TRUE),
+    n_jours_crue = n()
+  )
+
+# Modèles linéaires
+model_max    <- lm(debit_max    ~ year, data = Magnan_crues_annuel)
+model_moyen  <- lm(debit_moyen  ~ year, data = Magnan_crues_annuel)
+model_njours <- lm(n_jours_crue ~ year, data = Magnan_crues_annuel)
+
+# Extraire les stats
+get_stats <- function(model) {
+  coefs <- summary(model)$coefficients
+  if (nrow(coefs) < 2) {
+    # Pas assez de données pour estimer la pente
+    return(list(p = NA, slope = NA))
+  }
+  list(
+    p     = coefs[2, 4],
+    slope = coefs[2, 1]
+  )
+}
+
+stats_max    <- get_stats(model_max)
+stats_moyen  <- get_stats(model_moyen)
+stats_njours <- get_stats(model_njours)
+
+# ── Graphique 1 : débit max annuel ──
+p1 <- ggplot(Magnan_crues_annuel, aes(x = year, y = debit_max)) +
+  geom_point(color = "firebrick", size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "firebrick", fill = "firebrick",
+              alpha = 0.15, linewidth = 1) +
+  annotate("text",
+           x = min(Magnan_crues_annuel$year),
+           y = max(Magnan_crues_annuel$debit_max) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_max$slope, 1), " m³/s/an",
+                          "\np ", ifelse(stats_max$p < 0.05, "< 0.05",
+                                         ifelse(stats_max$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_max$p, 3)))))) +
+  labs(title = "a) Débit maximum annuel en crue",
+       x = NULL, y = "Débit max (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Graphique 2 : débit moyen en crue ──
+p2 <- ggplot(Magnan_crues_annuel, aes(x = year, y = debit_moyen)) +
+  geom_point(color = "steelblue", size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "steelblue", fill = "steelblue",
+              alpha = 0.15, linewidth = 1) +
+  annotate("text",
+           x = min(Magnan_crues_annuel$year),
+           y = max(Magnan_crues_annuel$debit_moyen) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_moyen$slope, 1), " m³/s/an",
+                          "\np ", ifelse(stats_moyen$p < 0.05, "< 0.05",
+                                         ifelse(stats_moyen$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_moyen$p, 3)))))) +
+  labs(title = "b) Débit moyen annuel en crue",
+       x = NULL, y = "Débit moyen (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Graphique 3 : nombre de jours en crue ──
+p3 <- ggplot(Magnan_crues_annuel, aes(x = year, y = n_jours_crue)) +
+  geom_col(fill = "darkorange", alpha = 0.7, color = "black", linewidth = 0.2) +
+  geom_smooth(method = "lm", color = "darkorange4", fill = "darkorange",
+              alpha = 0.2, linewidth = 1) +
+  annotate("text",
+           x = min(Magnan_crues_annuel$year),
+           y = max(Magnan_crues_annuel$n_jours_crue) * 0.97,
+           hjust = 0, vjust = 1, size = 3.8, fontface = "italic", color = "grey20",
+           label = paste0("pente = ", round(stats_njours$slope, 2), " jours/an",
+                          "\np ", ifelse(stats_njours$p < 0.05, "< 0.05",
+                                         ifelse(stats_njours$p < 0.001, "< 0.001",
+                                                paste0("= ", round(stats_njours$p, 3)))))) +
+  labs(title = "c) Nombre de jours en crue par an (seuil > 10 m³/s)",
+       x = NULL, y = "Nb jours") +
+  theme_bw(base_size = 12) +
+  theme(plot.title       = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+# ── Assemblage ──
+(p1 / p2 / p3) +
+  plot_annotation(
+    title    = "Évolution des crues du Magnan (2014 - 2024)",
+    subtitle = "Seuil de crue : débit > 10 m³/s · Station AAM",
+    caption  = "Source : Banque Hydro France",
+    theme    = theme(
+      plot.title    = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey50"),
+      plot.caption  = element_text(size = 9,  color = "grey50", hjust = 0)
+    )
+  )
+
+crues_saison_magnan <- Magnan_all_debit |>
+  filter(debit_interp >= 10) |>
+  mutate(month = month(date, label = TRUE, abbr = TRUE)) |>
+  count(month)
+
+ggplot(crues_saison_magnan, aes(x = month, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black",
+           linewidth = 0.2) +
+  labs(title = "Saisonnalité des crues du Magnan (2014-2019)",
+       x = NULL, y = "Nombre de jours en crue") +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+
+## recap -------------------------------------------------------------------
+
+# Vecteur de traduction des mois
+mois_fr <- c("Jan", "Fév", "Mar", "Avr", "Mai", "Jun",
+             "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc")
+
+crues_saison_var <- Y6442010_2008_2019 |>
+  filter(debit_interp >= 121) |>
+  mutate(month_num = month(date),
+         month     = factor(mois_fr[month_num], levels = mois_fr)) |>
+  count(month) |>
+  mutate(fleuve = "Var")
+
+crues_saison_paillon <- Paillon_all_debit |>
+  filter(debit_interp >= 85) |>
+  mutate(month_num = month(date),
+         month     = factor(mois_fr[month_num], levels = mois_fr)) |>
+  count(month) |>
+  mutate(fleuve = "Paillon")
+
+crues_saison_magnan <- Magnan_all_debit |>
+  filter(debit_interp >= 10) |>
+  mutate(month_num = month(date),
+         month     = factor(mois_fr[month_num], levels = mois_fr)) |>
+  count(month) |>
+  mutate(fleuve = "Magnan")
+# Assembler
+crues_saison_all <- bind_rows(
+  crues_saison_var,
+  crues_saison_paillon,
+  crues_saison_magnan
+) |>
+  mutate(fleuve = factor(fleuve, levels = c("Var", "Paillon", "Magnan")))
+
+# Normalisation par le nombre d'années
+crues_saison_all <- crues_saison_all |>
+  mutate(n_annees = case_when(
+    fleuve == "Var"     ~ 12,   # 2008-2019
+    fleuve == "Paillon" ~ 7,    # 2013-2019
+    fleuve == "Magnan"  ~ 6     # 2014-2019
+  ),
+  n_norm = n / n_annees)   # jours en crue par an en moyenne
+
+# puis remplace y = n par y = n_norm dans le ggplot
+# et adapte le label : y = "Nombre moyen de jours en crue par an"
+
+# Plot
+ggplot(crues_saison_all, aes(x = month, y = n_norm, color = fleuve, group = fleuve)) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c("Var"     = "steelblue",
+               "Paillon" = "darkorange",
+               "Magnan"  = "chartreuse4"),
+    name = "Fleuve"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.08))) +
+  labs(
+    title    = "Saisonnalité des crues",
+    subtitle = "Série normalisée",
+    x        = NULL,
+    y        = "Nombre de jours en crue",
+    caption  = "Source : Hydro France et MNCA"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 15),
+    plot.subtitle      = element_text(size = 13, color = "grey50", margin = margin(b = 8)),
+    plot.caption       = element_text(size = 13, color = "grey50", hjust = 0),
+    axis.text.x        = element_text(size = 13),
+    axis.text.y        = element_text(size = 13),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    legend.position    = "top",
+    legend.text        = element_text(size = 11)
+  )
