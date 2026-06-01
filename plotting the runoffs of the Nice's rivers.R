@@ -17,6 +17,7 @@ library(WaveletComp)
 library(patchwork)
 library(zoo)
 library(tidyverse)
+library(trend)
 
 # loading -----------------------------------------------------------------
 
@@ -107,7 +108,7 @@ sec_axis_adjustement_factors <- function(var_to_scale, var_ref) {
 ## Var runoff --------------------------------------------------------------
 
 # we have a big hole in our data from 2001 to 2006
-# we have to put a weighted lm on complet datas
+# we have to put a weighted lm on complete data
 
 # create a new dataframe, starting in 2006
 
@@ -2203,7 +2204,7 @@ summary(model_lm)
 ## Var ---------------------------------------------------------------------
 
 Var_crues <- Y6442010_complet %>%
-  filter(date >= as.Date("2008-01-01"), date <= as.Date("2019-12-31")) |> 
+  filter(date >= as.Date("2008-01-01"), date <= as.Date("2024-12-31")) |> 
   filter(débit > 121)
 
 # Extraire le maximum annuel de crue
@@ -2704,3 +2705,165 @@ ggplot(crues_saison_all, aes(x = month, y = n_norm, color = fleuve, group = fleu
     legend.position    = "top",
     legend.text        = element_text(size = 11)
   )
+
+# estimate liquid flow rate trend -----------------------------------------
+
+## Var ---------------------------------------------------------------------
+
+Y6442010_depuis_2006 <- Y6442010_depuis_2000 |> 
+  filter(date >= "2006-01-01")
+
+# Supprimer les NA avant le test
+debit_clean <- Y6442010_depuis_2006 |>
+  drop_na(débit)
+
+# Mann-Kendall sur le débit
+mk_debit <- mk.test(debit_clean$débit)
+print(mk_debit)
+
+# Pente Theil-Sen — sans mblm (rapide)
+debit_clean <- debit_clean |>
+  mutate(date_num = as.numeric(date - min(date)))
+
+sen_debit          <- sens.slope(debit_clean$débit)
+slope_debit_jan    <- sen_debit$estimates * 365   # m³/s/an
+
+# Intercept calculé manuellement
+intercept_debit    <- median(
+  debit_clean$débit - sen_debit$estimates * debit_clean$date_num,
+  na.rm = TRUE
+)
+
+# Droite Theil-Sen pour le plot
+debit_clean <- debit_clean |>
+  mutate(theilsen_fit_debit = intercept_debit + sen_debit$estimates * date_num)
+
+cat("Tendance débit :", round(slope_debit_jan, 3), "m³/s/an\n")
+cat("Mann-Kendall p =", round(mk_debit$p.value, 4), "\n")
+
+debit_clean_var <- debit_clean  # après le bloc Var
+mk_var <- mk_debit
+sen_var <- sen_debit
+
+## Paillon ---------------------------------------------------------------------
+
+load("data/MNCA/Paillon_all_debit.Rdata")
+
+sum(is.na(Paillon_all_debit))
+
+# Supprimer les NA avant le test
+debit_clean <- Paillon_all_debit |>
+  drop_na(ABA_debit_mean)
+
+# Mann-Kendall sur le débit
+mk_debit <- mk.test(debit_clean$ABA_debit_mean)
+print(mk_debit)
+
+# Pente Theil-Sen — sans mblm (rapide)
+debit_clean <- debit_clean |>
+  mutate(date_num = as.numeric(date - min(date)))
+
+sen_debit          <- sens.slope(debit_clean$ABA_debit_mean)
+slope_debit_jan    <- sen_debit$estimates * 365   # m³/s/an
+
+# Intercept calculé manuellement
+intercept_debit    <- median(
+  debit_clean$ABA_debit_mean - sen_debit$estimates * debit_clean$date_num,
+  na.rm = TRUE
+)
+
+# Droite Theil-Sen pour le plot
+debit_clean <- debit_clean |>
+  mutate(theilsen_fit_debit = intercept_debit + sen_debit$estimates * date_num)
+
+cat("Tendance débit :", round(slope_debit_jan, 3), "m³/s/an\n")
+cat("Mann-Kendall p =", round(mk_debit$p.value, 4), "\n")
+
+# Paillon
+debit_clean_paillon <- debit_clean  # après le bloc Paillon
+mk_paillon <- mk_debit
+sen_paillon <- sen_debit
+
+## Magnan ---------------------------------------------------------------------
+
+load("data/MNCA/Magnan_all_debit.Rdata")
+
+sum(is.na(Magnan_all_debit))
+
+# Supprimer les NA avant le test
+debit_clean <- Magnan_all_debit |>
+  drop_na(AAM_debit_mean)
+
+# Mann-Kendall sur le débit
+mk_debit <- mk.test(debit_clean$AAM_debit_mean)
+print(mk_debit)
+
+# Pente Theil-Sen — sans mblm (rapide)
+debit_clean <- debit_clean |>
+  mutate(date_num = as.numeric(date - min(date)))
+
+sen_debit          <- sens.slope(debit_clean$AAM_debit_mean)
+slope_debit_jan    <- sen_debit$estimates * 365   # m³/s/an
+
+# Intercept calculé manuellement
+intercept_debit    <- median(
+  debit_clean$AAM_debit_mean - sen_debit$estimates * debit_clean$date_num,
+  na.rm = TRUE
+)
+
+# Droite Theil-Sen pour le plot
+debit_clean <- debit_clean |>
+  mutate(theilsen_fit_debit = intercept_debit + sen_debit$estimates * date_num)
+
+cat("Tendance débit :", round(slope_debit_jan, 3), "m³/s/an\n")
+cat("Mann-Kendall p =", round(mk_debit$p.value, 4), "\n")
+
+debit_clean_magnan <- debit_clean  # après le bloc Magnan
+mk_magnan <- mk_debit
+sen_magnan <- sen_debit
+
+# afficher les plot -------------------------------------------------------
+
+plot_tendance <- function(data, date_col, debit_col,
+                          mk_pval, slope_an, titre, ylim_max = NULL) {
+  
+  sig_label <- ifelse(mk_pval < 2.2e-16,
+                      "p < 2.2×10⁻¹⁶ *",
+                      ifelse(mk_pval < 0.05,
+                             paste0("p = ", round(mk_pval, 4), " *"),
+                             paste0("p = ", round(mk_pval, 4), " (ns)")))
+  slope_label <- paste0("Pente = ", round(slope_an, 3), " m³/s/an")
+  
+  y_max_visible <- if (!is.null(ylim_max)) ylim_max else max(data[[debit_col]], na.rm = TRUE)
+  
+  p <- ggplot(data, aes(x = .data[[date_col]])) +
+    geom_line(aes(y = .data[[debit_col]]), 
+              color = "steelblue", alpha = 0.6, linewidth = 0.4) +
+    annotate("text", 
+             x = min(data[[date_col]]), 
+             y = y_max_visible * 0.95,
+             label = paste(sig_label, slope_label, sep = "\n"),
+             hjust = 0, vjust = 1, size = 8,
+             color = ifelse(mk_pval < 0.05, "firebrick", "gray40")) +
+    labs(title = titre, x = NULL, y = "Débit (m³/s)") +
+    theme_bw(base_size = 11)
+  
+  if (!is.null(ylim_max)) {
+    p <- p + coord_cartesian(ylim = c(0, ylim_max))
+  }
+  
+  return(p)
+}
+
+# ---- Graphiques ----
+p1 <- plot_tendance(debit_clean_var, "date", "débit",
+                    mk_var$p.value, sen_var$estimates * 365, "Var")
+
+p2 <- plot_tendance(debit_clean_paillon, "date", "ABA_debit_mean",
+                    mk_paillon$p.value, sen_paillon$estimates * 365, "Paillon")
+
+p3 <- plot_tendance(debit_clean_magnan, "date", "AAM_debit_mean",
+                    mk_magnan$p.value, sen_magnan$estimates * 365, "Magnan")
+
+p1 / p2 / p3
+
