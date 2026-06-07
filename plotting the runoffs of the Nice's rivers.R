@@ -891,8 +891,6 @@ composantes_long <- composantes |>
   pivot_longer(-date, names_to = "composante", values_to = "valeur") |>
   mutate(composante = factor(composante,
                              levels = c("observed", "tendance", "saisonnalite", "residus")))
-library(seasonal)
-library(patchwork)
 
 # Extraire les composantes
 composantes <- data.frame(
@@ -1406,29 +1404,153 @@ summary(model_lm)
 
 ### X11 decomposition --------------------------------------------------
 
-# X11 nécessite une fréquence mensuelle ou trimestrielle
-# Si tu as des données journalières, agrège d'abord par mois
+sum(is.na(Paillon_all_debit$ABA_debit_mean))
 
+# Localiser et caractériser les trous
+Paillon_all_debit |>
+  mutate(est_na = is.na(ABA_debit_mean)) |>
+  filter(est_na) |>
+  mutate(
+    groupe = cumsum(c(1, diff(as.numeric(date)) > 1))
+  ) |>
+  group_by(groupe) |>
+  summarise(
+    debut     = min(date),
+    fin       = max(date),
+    n_jours   = n()
+  ) |>
+  arrange(debut)
+
+Paillon_all_debit <- Paillon_all_debit |>
+  arrange(date) |>
+  mutate(
+    debit_interp = na.approx(ABA_debit_mean, x = date, na.rm = FALSE)
+  )
+
+# Vérifier qu'il ne reste plus de NA
+sum(is.na(Paillon_all_debit$debit_interp))
+
+# Visualiser pour vérifier que l'interpolation est cohérente
+Paillon_all_debit |>
+  mutate(est_interpole = is.na(ABA_debit_mean) & !is.na(debit_interp)) |>
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = debit_interp), color = "steelblue", linewidth = 0.5) +
+  geom_point(
+    data = ~ filter(.x, est_interpole),
+    aes(y = debit_interp),
+    color = "red", size = 1.5
+  ) +
+  labs(
+    title    = "Débit du Paillon interpolé — 2013-2025",
+    subtitle = "Points rouges = valeurs interpolées",
+    x        = NULL,
+    y        = "Débit (m³/s)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+# Agréger en mensuel
 debit_mensuel <- Paillon_all_debit |>
   mutate(mois = floor_date(date, "month")) |>
   group_by(mois) |>
-  summarise(debit_mean = mean(ABA_debit_mean, na.rm = TRUE)) |>
-  filter(!is.na(debit_mean))
+  summarise(debit = mean(debit_interp, na.rm = TRUE))
 
-# Convertir en ts mensuel
-debit_ts_mensuel <- ts(debit_mensuel$debit_mean, 
-                       start     = c(2013, 1), 
-                       frequency = 12)
+# Vérifier qu'il n'y a plus de NA
+sum(is.na(debit_mensuel$debit))
 
-# X11 decomposition
-x11_result <- seas(debit_ts_mensuel, x11 = "")
-plot(x11_result)
+# Créer la série temporelle sur la colonne débit uniquement
+debit_ts <- ts(
+  data      = debit_mensuel$debit,  # ← juste la colonne
+  start     = c(2013, 1),
+  frequency = 12
+)
+
+# Appliquer X11
+x11_result <- seas(debit_ts, x11 = "")
+
+# 3. Inspecter les résultats
+summary(x11_result)
+
+# 4. Extraire les composantes
+composantes <- data.frame(
+  date        = debit_mensuel$mois,
+  observed    = as.numeric(original(x11_result)),    # signal brut
+  tendance    = as.numeric(trend(x11_result)),        # tendance lissée
+  saisonnalite = as.numeric(seasonal(x11_result)),   # composante saisonnière
+  residus     = as.numeric(irregular(x11_result))    # résidus
+)
+
+# 5. Visualiser
+composantes_long <- composantes |>
+  pivot_longer(-date, names_to = "composante", values_to = "valeur") |>
+  mutate(composante = factor(composante,
+                             levels = c("observed", "tendance", "saisonnalite", "residus")))
 
 # Extraire les composantes
-trend     <- trend(x11_result)
-seasonal  <- seasonal(x11_result)
-remainder <- irregular(x11_result)
+composantes <- data.frame(
+  date         = debit_mensuel$mois,
+  observed     = as.numeric(original(x11_result)),
+  tendance     = as.numeric(trend(x11_result)),
+  saisonnalite = as.numeric(seasonal(x11_result)),
+  residus      = as.numeric(irregular(x11_result))
+)
 
+# Graphique 1 — Signal brut + tendance
+p1 <- ggplot(composantes, aes(x = date)) +
+  geom_line(aes(y = observed, color = "Signal brut"), linewidth = 0.5, alpha = 0.7) +
+  geom_line(aes(y = tendance, color = "Tendance"), linewidth = 1.1) +
+  scale_color_manual(values = c("Signal brut" = "steelblue", "Tendance" = "firebrick")) +
+  labs(title = "a) Signal observé et tendance", x = NULL, y = "Débit (m³/s)", color = NULL) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    legend.position  = "top",
+    legend.text      = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 2 — Saisonnalité
+p2 <- ggplot(composantes, aes(x = date, y = saisonnalite)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(saisonnalite, 0), ymax = 0), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 0, ymax = pmax(saisonnalite, 0)), fill = "chartreuse4", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  labs(title = "b) Composante saisonnière", x = NULL, y = "Débit (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 3 — Résidus
+p3 <- ggplot(composantes, aes(x = date, y = residus)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(residus, 1), ymax = 1), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 1, ymax = pmax(residus, 1)), fill = "tomato", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(title = "c) Résidus (irrégulier)", x = NULL, y = "Facteur") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  )
+
+# Assembler
+(p1 / p2 / p3) +
+  plot_annotation(
+    title    = "Décomposition X11 du débit du Paillon — 2013–2025",
+    subtitle = "Station ABA — Agrégation mensuelle",
+    theme    = theme(
+      plot.title    = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey50")
+    )
+  )
 
 ### ondelette decomposition -------------------------------------------------
 
@@ -1816,29 +1938,153 @@ summary(model_lm)
 
 ### X11 decomposition --------------------------------------------------
 
-# X11 nécessite une fréquence mensuelle ou trimestrielle
-# Si tu as des données journalières, agrège d'abord par mois
+sum(is.na(Magnan_all_debit$AAM_debit_mean))
 
+# Localiser et caractériser les trous
+Magnan_all_debit |>
+  mutate(est_na = is.na(AAM_debit_mean)) |>
+  filter(est_na) |>
+  mutate(
+    groupe = cumsum(c(1, diff(as.numeric(date)) > 1))
+  ) |>
+  group_by(groupe) |>
+  summarise(
+    debut     = min(date),
+    fin       = max(date),
+    n_jours   = n()
+  ) |>
+  arrange(debut)
+
+Magnan_all_debit <- Magnan_all_debit |>
+  arrange(date) |>
+  mutate(
+    debit_interp = na.approx(AAM_debit_mean, x = date, na.rm = FALSE)
+  )
+
+# Vérifier qu'il ne reste plus de NA
+sum(is.na(Magnan_all_debit$debit_interp))
+
+# Visualiser pour vérifier que l'interpolation est cohérente
+Magnan_all_debit |>
+  mutate(est_interpole = is.na(AAM_debit_mean) & !is.na(debit_interp)) |>
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = debit_interp), color = "steelblue", linewidth = 0.5) +
+  geom_point(
+    data = ~ filter(.x, est_interpole),
+    aes(y = debit_interp),
+    color = "red", size = 1.5
+  ) +
+  labs(
+    title    = "Débit du Magnan interpolé — 2014-2025",
+    subtitle = "Points rouges = valeurs interpolées",
+    x        = NULL,
+    y        = "Débit (m³/s)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+# Agréger en mensuel
 debit_mensuel <- Magnan_all_debit |>
   mutate(mois = floor_date(date, "month")) |>
   group_by(mois) |>
-  summarise(debit_mean = mean(AAM_debit_mean, na.rm = TRUE)) |>
-  filter(!is.na(debit_mean))
+  summarise(debit = mean(debit_interp, na.rm = TRUE))
 
-# Convertir en ts mensuel
-debit_ts_mensuel <- ts(debit_mensuel$debit_mean, 
-                       start     = c(2014, 1), 
-                       frequency = 12)
+# Vérifier qu'il n'y a plus de NA
+sum(is.na(debit_mensuel$debit))
 
-# X11 decomposition
-x11_result <- seas(debit_ts_mensuel, x11 = "")
-plot(x11_result)
+# Créer la série temporelle sur la colonne débit uniquement
+debit_ts <- ts(
+  data      = debit_mensuel$debit,  # ← juste la colonne
+  start     = c(2014, 1),
+  frequency = 12
+)
+
+# Appliquer X11
+x11_result <- seas(debit_ts, x11 = "")
+
+# 3. Inspecter les résultats
+summary(x11_result)
+
+# 4. Extraire les composantes
+composantes <- data.frame(
+  date        = debit_mensuel$mois,
+  observed    = as.numeric(original(x11_result)),    # signal brut
+  tendance    = as.numeric(trend(x11_result)),        # tendance lissée
+  saisonnalite = as.numeric(seasonal(x11_result)),   # composante saisonnière
+  residus     = as.numeric(irregular(x11_result))    # résidus
+)
+
+# 5. Visualiser
+composantes_long <- composantes |>
+  pivot_longer(-date, names_to = "composante", values_to = "valeur") |>
+  mutate(composante = factor(composante,
+                             levels = c("observed", "tendance", "saisonnalite", "residus")))
 
 # Extraire les composantes
-trend     <- trend(x11_result)
-seasonal  <- seasonal(x11_result)
-remainder <- irregular(x11_result)
+composantes <- data.frame(
+  date         = debit_mensuel$mois,
+  observed     = as.numeric(original(x11_result)),
+  tendance     = as.numeric(trend(x11_result)),
+  saisonnalite = as.numeric(seasonal(x11_result)),
+  residus      = as.numeric(irregular(x11_result))
+)
 
+# Graphique 1 — Signal brut + tendance
+p1 <- ggplot(composantes, aes(x = date)) +
+  geom_line(aes(y = observed, color = "Signal brut"), linewidth = 0.5, alpha = 0.7) +
+  geom_line(aes(y = tendance, color = "Tendance"), linewidth = 1.1) +
+  scale_color_manual(values = c("Signal brut" = "steelblue", "Tendance" = "firebrick")) +
+  labs(title = "a) Signal observé et tendance", x = NULL, y = "Débit (m³/s)", color = NULL) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    legend.position  = "top",
+    legend.text      = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 2 — Saisonnalité
+p2 <- ggplot(composantes, aes(x = date, y = saisonnalite)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(saisonnalite, 0), ymax = 0), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 0, ymax = pmax(saisonnalite, 0)), fill = "chartreuse4", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  labs(title = "b) Composante saisonnière", x = NULL, y = "Débit (m³/s)") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank()
+  )
+
+# Graphique 3 — Résidus
+p3 <- ggplot(composantes, aes(x = date, y = residus)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pmin(residus, 1), ymax = 1), fill = "steelblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = 1, ymax = pmax(residus, 1)), fill = "tomato", alpha = 0.3) +
+  geom_line(color = "grey30", linewidth = 0.6) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(title = "c) Résidus (irrégulier)", x = NULL, y = "Facteur") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  )
+
+# Assembler
+(p1 / p2 / p3) +
+  plot_annotation(
+    title    = "Décomposition X11 du débit du Magnan — 2014–2025",
+    subtitle = "Station ABA — Agrégation mensuelle",
+    theme    = theme(
+      plot.title    = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey50")
+    )
+  )
 
 ### ondelette decomposition -------------------------------------------------
 
@@ -2204,7 +2450,7 @@ summary(model_lm)
 ## Var ---------------------------------------------------------------------
 
 Var_crues <- Y6442010_complet %>%
-  filter(date >= as.Date("2008-01-01"), date <= as.Date("2024-12-31")) |> 
+  filter(date >= as.Date("2008-01-01"), date <= as.Date("2019-12-31")) |> 
   filter(débit > 121)
 
 # Extraire le maximum annuel de crue
@@ -2284,7 +2530,7 @@ p3 <- ggplot(Var_crues_annuel, aes(x = year, y = n_jours_crue)) +
                           "\np ", ifelse(stats_njours$p < 0.05, "< 0.05",
                                          ifelse(stats_njours$p < 0.001, "< 0.001",
                                                 paste0("= ", round(stats_njours$p, 3)))))) +
-  labs(title = "c) Nombre de jours en crue par an (seuil > 100 m³/s)",
+  labs(title = "c) Nombre de jours en crue par an (seuil > 120 m³/s)",
        x = NULL, y = "Nb jours") +
   theme_bw(base_size = 12) +
   theme(plot.title       = element_text(face = "bold", size = 11),
@@ -2294,7 +2540,7 @@ p3 <- ggplot(Var_crues_annuel, aes(x = year, y = n_jours_crue)) +
 (p1 / p2 / p3) +
   plot_annotation(
     title    = "Évolution des crues du Var",
-    subtitle = "Seuil de crue : débit > 100 m³/s · Station Y6442010",
+    subtitle = "Seuil de crue : débit > 121 m³/s · Station Y6442010",
     caption  = "Source : Banque Hydro France",
     theme    = theme(
       plot.title    = element_text(size = 14, face = "bold"),
@@ -2655,6 +2901,7 @@ crues_saison_magnan <- Magnan_all_debit |>
          month     = factor(mois_fr[month_num], levels = mois_fr)) |>
   count(month) |>
   mutate(fleuve = "Magnan")
+
 # Assembler
 crues_saison_all <- bind_rows(
   crues_saison_var,
@@ -2706,142 +2953,162 @@ ggplot(crues_saison_all, aes(x = month, y = n_norm, color = fleuve, group = fleu
     legend.text        = element_text(size = 11)
   )
 
+# Compléter les combinaisons manquantes avec des zéros
+crues_saison_all <- crues_saison_all |>
+  complete(month, fleuve, fill = list(n = 0, n_norm = 0))
+
+ggplot(crues_saison_all, aes(x = month, y = n_norm, fill = fleuve)) +
+  geom_col(position = "dodge", width = 0.7) +
+  scale_fill_manual(
+    values = c("Var"     = "steelblue",
+               "Paillon" = "darkorange",
+               "Magnan"  = "chartreuse4"),
+    name = "Fleuve"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.08))) +
+  labs(
+    # title    = "Saisonnalité des crues",
+    # subtitle = "Série normalisée",
+    x        = NULL,
+    y        = "Nombre moyen de jours en crue par an (série normalisée)",
+    caption  = "Source : Hydro France et MNCA"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 15),
+    plot.subtitle      = element_text(size = 13, color = "grey50", margin = margin(b = 8)),
+    plot.caption       = element_text(size = 13, color = "grey50", hjust = 0),
+    axis.text.x        = element_text(size = 15),
+    axis.text.y        = element_text(size = 15),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    legend.position    = "top",
+    legend.text        = element_text(size = 15)
+  )
+
+
 # estimate liquid flow rate trend -----------------------------------------
 
 ## Var ---------------------------------------------------------------------
 
 Y6442010_depuis_2006 <- Y6442010_depuis_2000 |> 
-  filter(date >= "2006-01-01")
+  filter(date >= "2006-01-01", date <= "2025-12-31")  # ← ajout
 
-# Supprimer les NA avant le test
 debit_clean <- Y6442010_depuis_2006 |>
   drop_na(débit)
 
-# Mann-Kendall sur le débit
 mk_debit <- mk.test(debit_clean$débit)
 print(mk_debit)
 
-# Pente Theil-Sen — sans mblm (rapide)
 debit_clean <- debit_clean |>
   mutate(date_num = as.numeric(date - min(date)))
 
-sen_debit          <- sens.slope(debit_clean$débit)
-slope_debit_jan    <- sen_debit$estimates * 365   # m³/s/an
+sen_debit       <- sens.slope(debit_clean$débit)
+slope_debit_jan <- sen_debit$estimates * 365
 
-# Intercept calculé manuellement
-intercept_debit    <- median(
+intercept_debit <- median(
   debit_clean$débit - sen_debit$estimates * debit_clean$date_num,
   na.rm = TRUE
 )
 
-# Droite Theil-Sen pour le plot
 debit_clean <- debit_clean |>
   mutate(theilsen_fit_debit = intercept_debit + sen_debit$estimates * date_num)
 
 cat("Tendance débit :", round(slope_debit_jan, 3), "m³/s/an\n")
 cat("Mann-Kendall p =", round(mk_debit$p.value, 4), "\n")
 
-debit_clean_var <- debit_clean  # après le bloc Var
-mk_var <- mk_debit
+debit_clean_var <- debit_clean
+mk_var  <- mk_debit
 sen_var <- sen_debit
 
 ## Paillon ---------------------------------------------------------------------
 
 load("data/MNCA/Paillon_all_debit.Rdata")
 
-sum(is.na(Paillon_all_debit))
+Paillon_all_debit <- Paillon_all_debit |> 
+  filter(date <= "2025-12-31")   # ← ajout
 
-# Supprimer les NA avant le test
 debit_clean <- Paillon_all_debit |>
   drop_na(ABA_debit_mean)
 
-# Mann-Kendall sur le débit
 mk_debit <- mk.test(debit_clean$ABA_debit_mean)
 print(mk_debit)
 
-# Pente Theil-Sen — sans mblm (rapide)
 debit_clean <- debit_clean |>
   mutate(date_num = as.numeric(date - min(date)))
 
-sen_debit          <- sens.slope(debit_clean$ABA_debit_mean)
-slope_debit_jan    <- sen_debit$estimates * 365   # m³/s/an
+sen_debit       <- sens.slope(debit_clean$ABA_debit_mean)
+slope_debit_jan <- sen_debit$estimates * 365
 
-# Intercept calculé manuellement
-intercept_debit    <- median(
+intercept_debit <- median(
   debit_clean$ABA_debit_mean - sen_debit$estimates * debit_clean$date_num,
   na.rm = TRUE
 )
 
-# Droite Theil-Sen pour le plot
 debit_clean <- debit_clean |>
   mutate(theilsen_fit_debit = intercept_debit + sen_debit$estimates * date_num)
 
 cat("Tendance débit :", round(slope_debit_jan, 3), "m³/s/an\n")
 cat("Mann-Kendall p =", round(mk_debit$p.value, 4), "\n")
 
-# Paillon
-debit_clean_paillon <- debit_clean  # après le bloc Paillon
-mk_paillon <- mk_debit
+debit_clean_paillon <- debit_clean
+mk_paillon  <- mk_debit
 sen_paillon <- sen_debit
 
 ## Magnan ---------------------------------------------------------------------
 
 load("data/MNCA/Magnan_all_debit.Rdata")
 
-sum(is.na(Magnan_all_debit))
+Magnan_all_debit <- Magnan_all_debit |> 
+  filter(date <= "2025-12-31")   # ← ajout
 
-# Supprimer les NA avant le test
 debit_clean <- Magnan_all_debit |>
   drop_na(AAM_debit_mean)
 
-# Mann-Kendall sur le débit
 mk_debit <- mk.test(debit_clean$AAM_debit_mean)
 print(mk_debit)
 
-# Pente Theil-Sen — sans mblm (rapide)
 debit_clean <- debit_clean |>
   mutate(date_num = as.numeric(date - min(date)))
 
-sen_debit          <- sens.slope(debit_clean$AAM_debit_mean)
-slope_debit_jan    <- sen_debit$estimates * 365   # m³/s/an
+sen_debit       <- sens.slope(debit_clean$AAM_debit_mean)
+slope_debit_jan <- sen_debit$estimates * 365
 
-# Intercept calculé manuellement
-intercept_debit    <- median(
+intercept_debit <- median(
   debit_clean$AAM_debit_mean - sen_debit$estimates * debit_clean$date_num,
   na.rm = TRUE
 )
 
-# Droite Theil-Sen pour le plot
 debit_clean <- debit_clean |>
   mutate(theilsen_fit_debit = intercept_debit + sen_debit$estimates * date_num)
 
 cat("Tendance débit :", round(slope_debit_jan, 3), "m³/s/an\n")
 cat("Mann-Kendall p =", round(mk_debit$p.value, 4), "\n")
 
-debit_clean_magnan <- debit_clean  # après le bloc Magnan
-mk_magnan <- mk_debit
+debit_clean_magnan <- debit_clean
+mk_magnan  <- mk_debit
 sen_magnan <- sen_debit
 
-# afficher les plot -------------------------------------------------------
+# afficher les plots -------------------------------------------------------
 
 plot_tendance <- function(data, date_col, debit_col,
                           mk_pval, slope_an, titre, ylim_max = NULL) {
   
-  sig_label <- ifelse(mk_pval < 2.2e-16,
-                      "p < 2.2×10⁻¹⁶ *",
-                      ifelse(mk_pval < 0.05,
-                             paste0("p = ", round(mk_pval, 4), " *"),
-                             paste0("p = ", round(mk_pval, 4), " (ns)")))
+  sig_label   <- ifelse(mk_pval < 2.2e-16,
+                        "p < 2.2×10⁻¹⁶ *",
+                        ifelse(mk_pval < 0.05,
+                               paste0("p = ", round(mk_pval, 4), " *"),
+                               paste0("p = ", round(mk_pval, 4), " (ns)")))
   slope_label <- paste0("Pente = ", round(slope_an, 3), " m³/s/an")
   
   y_max_visible <- if (!is.null(ylim_max)) ylim_max else max(data[[debit_col]], na.rm = TRUE)
   
   p <- ggplot(data, aes(x = .data[[date_col]])) +
-    geom_line(aes(y = .data[[debit_col]]), 
+    geom_line(aes(y = .data[[debit_col]]),
               color = "steelblue", alpha = 0.6, linewidth = 0.4) +
-    annotate("text", 
-             x = min(data[[date_col]]), 
-             y = y_max_visible * 0.95,
+    annotate("text",
+             x     = min(data[[date_col]]),
+             y     = y_max_visible * 0.95,
              label = paste(sig_label, slope_label, sep = "\n"),
              hjust = 0, vjust = 1, size = 8,
              color = ifelse(mk_pval < 0.05, "firebrick", "gray40")) +
@@ -2855,15 +3122,15 @@ plot_tendance <- function(data, date_col, debit_col,
   return(p)
 }
 
-# ---- Graphiques ----
-p1 <- plot_tendance(debit_clean_var, "date", "débit",
-                    mk_var$p.value, sen_var$estimates * 365, "Var")
+# Graphiques
+p1 <- plot_tendance(debit_clean_var,     "date", "débit",
+                    mk_var$p.value,     sen_var$estimates     * 365, "Var")
 
 p2 <- plot_tendance(debit_clean_paillon, "date", "ABA_debit_mean",
                     mk_paillon$p.value, sen_paillon$estimates * 365, "Paillon")
 
-p3 <- plot_tendance(debit_clean_magnan, "date", "AAM_debit_mean",
-                    mk_magnan$p.value, sen_magnan$estimates * 365, "Magnan")
+p3 <- plot_tendance(debit_clean_magnan,  "date", "AAM_debit_mean",
+                    mk_magnan$p.value,  sen_magnan$estimates  * 365, "Magnan")
 
 p1 / p2 / p3
 
