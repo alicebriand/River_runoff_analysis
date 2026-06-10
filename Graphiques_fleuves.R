@@ -8,6 +8,11 @@ library(tidyverse)
 library(sf)
 library(ggspatial)   
 library(ggrepel)    
+library(patchwork)
+library(magick)
+library(tidyterra)
+library(terra)
+library(giscoR)
 
 # Load high-res shape files
 # Tuto here : https://www.etiennebacher.com/posts/2021-12-27-mapping-french-rivers-network/
@@ -20,6 +25,9 @@ ggplot() +
   coord_sf(xlim = c(6.8, 7.45), ylim = c(43.15, 43.8))
 
 # plotting ----------------------------------------------------------------
+
+coastline_giscoR <- gisco_get_coastallines(resolution = "01")
+countries_giscoR  <- gisco_get_countries(region = "Europe", resolution = "01")
 
 # on définit les deux zones d'études
 make_box <- function(xmin, xmax, ymin, ymax, crs = 4326) {
@@ -51,50 +59,12 @@ col_hi     <- "#003f7f"   # bleu foncé fleuves cibles
 col_box1   <- "#e05c1a"   # orange zone 1
 col_box2   <- "#9b2d8a"   # violet zone 2
 
-# une avec les deux zones d'études () : 
-
-ggplot() +
-  # Fond mer (couleur unie si pas de tuiles dispo hors-ligne)
-  theme(panel.background = element_rect(fill = col_sea)) +
-  # Terre
-  geom_sf(data = borders_FR, color = "black", fill = col_land, inherit.aes = FALSE) +
-  # Réseau hydrographique
-  geom_sf(data = rivers_FR, color = col_rivers, inherit.aes = FALSE, linewidth = 0.2, alpha = 0.7) +
-  # Fleuves cibles en bleu foncé
-  geom_sf(data = rivers_highlight, color = col_hi, inherit.aes = FALSE, linewidth = 0.8) +
-  # Zones d'étude
-  geom_sf(data = box_entière,     fill = NA, color = col_box1, linewidth = 1.2, linetype = "dashed") +
-  geom_sf(data = box_paillon, fill = NA, color = col_box2, linewidth = 1.2, linetype = "dashed") +
-  # Labels des zones
-  annotate("label", x = 6.925, y = 43.76, label = "Zone entière",
-           color = col_box1, size = 4, fontface = "bold", fill = "white", label.size = 0) +
-  annotate("label", x = 7.325, y = 43.76, label = "Zone Paillon / Magnan",
-           color = col_box2, size = 4, fontface = "bold", fill = "white", label.size = 0) +
-  # Emprise globale
-  coord_sf(xlim = c(6.8, 7.45), ylim = c(43.15, 43.8)) +
-  # Échelle + flèche nord
-  annotation_scale(location = "bl", width_hint = 0.25) +
-  annotation_north_arrow(location = "tr", which_north = "true",
-                         style = north_arrow_fancy_orienteering()) +
-  labs(
-    title    = "Zones d'études",
-  ) +
-  theme_minimal() +
-  theme(
-    panel.background = element_rect(fill = col_sea, color = NA),
-    panel.grid       = element_blank(),
-    plot.title       = element_text(face = "bold", size = 13),
-    axis.title       = element_blank()
-  )
-
-# une avec une seule zone d'étude
-
 # On zoome sur la bbox de la zone + un petit buffer
 zone_focus  <- box_entière
 buffer_deg  <- 0.05   # ~5 km
 bbox_focus  <- st_bbox(zone_focus)
 
-ggplot() +
+p_main <- ggplot() +
   theme(panel.background = element_rect(fill = col_sea)) +
   geom_sf(data = borders_FR, color = "black", fill = col_land, inherit.aes = FALSE) +
   geom_sf(data = rivers_FR,  color = col_rivers, inherit.aes = FALSE, linewidth = 0.35, alpha = 0.7) +
@@ -120,6 +90,140 @@ ggplot() +
     axis.title       = element_blank()
   )
 
-# ajouter un carré pour définir la zone d'étude
-# ajouter un fond version mer
+# Coordonnées de la zone zoomée
+box_zoom <- make_box(7.110978, 7.360000, 43.523182, 43.730000)
+bbox_zoom <- st_bbox(box_zoom)
 
+# Graphique zoomé
+p_zoom <- ggplot() +
+  geom_sf(data = borders_FR, color = "black", fill = col_land, inherit.aes = FALSE) +
+  geom_sf(data = rivers_FR,  color = col_rivers, inherit.aes = FALSE, 
+          linewidth = 0.35, alpha = 0.7) +
+  geom_sf(data = rivers_highlight, color = col_hi, inherit.aes = FALSE, linewidth = 1.2) +
+  # Labels des fleuves
+  # geom_sf_label(data = rivers_highlight,
+  #               aes(label = NAME),   # ← adapte le nom de la colonne si besoin
+  #               size = 3, color = col_hi, fill = "white",
+  #               label.padding = unit(0.15, "lines")) +
+  coord_sf(
+    xlim = c(bbox_zoom["xmin"], bbox_zoom["xmax"]),
+    ylim = c(bbox_zoom["ymin"], bbox_zoom["ymax"])
+  ) +
+  annotation_scale(location = "bl", width_hint = 0.3) +
+  annotation_north_arrow(location = "tr", which_north = "true",
+                         style = north_arrow_fancy_orienteering(),
+                         height = unit(1, "cm"), width = unit(1, "cm")) +
+  labs(title = "Zoom — Embouchures") +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = col_sea, color = NA),
+    panel.grid       = element_blank(),
+    plot.title       = element_text(face = "bold", size = 13),
+    axis.title       = element_blank()
+  )
+
+# Assemblage
+p_main | p_zoom
+
+# autre méthode -----------------------------------------------------------
+
+# Lister tous les fichiers du dossier
+list.files("~/Downloads/S2B_MSIL2A_20201003T101759_N0500_R065_T32TLP_20230412T082558.SAFE(1)/", recursive = TRUE)
+
+list.files("~/Downloads/S2B_MSIL2A_20201003T101759_N0500_R065_T32TLP_20230412T082558.SAFE(1)/", recursive = TRUE, full.names = TRUE)
+
+# Chemin vers le fichier TCI
+tci_path <- "~/Downloads/S2B_MSIL2A_20201003T101759_N0500_R065_T32TLP_20230412T082558.SAFE(1)/S2B_MSIL2A_20201003T101759_N0500_R065_T32TLP_20230412T082558.SAFE/GRANULE/L2A_T32TLP_A018681_20201003T102147/IMG_DATA/R10m/T32TLP_20201003T101759_TCI_10m.jp2"
+
+# Charger le raster
+tci <- rast(tci_path)
+
+# Vérifier le système de coordonnées
+crs(tci)
+ext(tci)
+
+# Recadrer sur ta zone d'intérêt (en WGS84 d'abord)
+zone <- ext(6.8925000, 7.4200000, 43.2736389, 43.7300000)
+
+
+# Reprojeter la zone dans le CRS du raster (UTM 32N)
+zone_sf <- st_bbox(c(xmin = 6.8925000, xmax = 7.4200000,
+                     ymin = 43.2736389, ymax = 43.7300000),
+                   crs = 4326) |>
+  st_as_sfc() |>
+  st_transform(crs(tci))
+
+# Recadrer et reprojeter en WGS84
+tci_crop_main <- tci |>
+  crop(zone_sf) |>
+  project("EPSG:4326")
+
+p_main <- ggplot() +
+  geom_spatraster_rgb(data = tci_crop_main) +
+  coord_sf(xlim   = c(6.8925000, 7.4200000),
+           ylim   = c(43.2736389, 43.7300000),
+           expand = FALSE,
+           datum  = sf::st_crs(4326)) +
+  annotation_scale(
+    location   = "bl",
+    width_hint = 0.3,
+    bar_cols   = c("white", "black"),  # ← barres blanc/noir visibles sur fond sombre
+    text_col   = "white",              # ← texte blanc
+    line_col   = "white"               # ← bordure blanche
+  ) +
+  annotation_north_arrow(location = "tr", which_north = "true",
+                         style = north_arrow_fancy_orienteering(),
+                         height = unit(1, "cm"), width = unit(1, "cm")) +
+  labs(x = "Longitude (°E)", y = "Latitude (°N)") +
+  theme_bw(base_size = 15) +
+  theme(axis.title = element_text(face = "bold"))
+
+# Recadrer sur ta zone d'intérêt (en WGS84 d'abord)
+zone <- ext(7.110978, 7.360000, 43.523182, 43.730000)
+
+# Reprojeter la zone dans le CRS du raster (UTM 32N)
+zone_sf <- st_bbox(c(xmin = 7.110978, xmax = 7.360000,
+                     ymin = 43.523182, ymax = 43.730000),
+                   crs = 4326) |>
+  st_as_sfc() |>
+  st_transform(crs(tci))
+
+# Recadrer et reprojeter en WGS84
+tci_crop_zoom <- tci |>
+  crop(zone_sf) |>
+  project("EPSG:4326")
+
+p_zoom <- ggplot() +
+  geom_spatraster_rgb(data = tci_crop_zoom) +
+  coord_sf(xlim   = c(7.110978, 7.360000),
+           ylim   = c(43.523182, 43.730000),
+           expand = FALSE,
+           datum  = sf::st_crs(4326)) +
+  annotation_scale(
+    location   = "bl",
+    width_hint = 0.3,
+    bar_cols   = c("white", "black"),  # ← barres blanc/noir visibles sur fond sombre
+    text_col   = "white",              # ← texte blanc
+    line_col   = "white"               # ← bordure blanche
+  ) +
+  annotation_north_arrow(location = "tr", which_north = "true",
+                         style = north_arrow_fancy_orienteering(),
+                         height = unit(1, "cm"), width = unit(1, "cm")) +
+  labs(x       = "Longitude (°E)",
+       y       = "Latitude (°N)",
+       caption = "Source : Copernicus/ESA — MSI L2A") +
+  theme_bw(base_size = 15) +
+  theme(
+    axis.title   = element_text(face = "bold"),
+    plot.caption = element_text(size = 15, color = "black", hjust = 0)
+  )
+
+# Assemblage
+(p_main | p_zoom) +
+  plot_annotation(
+    tag_levels = "a", tag_prefix = "(", tag_suffix = ")",
+    theme   = theme(
+      plot.title   = element_text(face = "bold", size = 13),
+      plot.caption = element_text(color = "grey50", size = 10, hjust = 0)
+    )
+  )
